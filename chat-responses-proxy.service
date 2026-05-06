@@ -1,0 +1,23 @@
+[Unit]
+Description=Chat-Responses API Proxy for DeepSeek V4
+After=network-online.target redis-server.service
+Wants=network-online.target redis-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/wdmms123/chat-to-responses-proxy
+Environment="DEEPSEEK_BASE=https://api.deepseek.com"
+Environment="DEEPSEEK_KEY=sk-your-deepseek-api-key"
+Environment="DEFAULT_MODEL=deepseek-v4-pro"
+Environment="PROXY_PORT=8080"
+Environment="REDIS_HOST=127.0.0.1"
+Environment="REDIS_PORT=6379"
+Environment="REDIS_DB=0"
+Environment="DEFAULT_REASONING_EFFORT=max"
+Environment="TOOL_USE_ENFORCEMENT=You MUST use the provided tools to accomplish the user's task. Never respond with just text explaining what you would do — actually call the tools. If tools are available, use them to take real actions: run commands, read/write files, search the web. Do NOT ask the user for confirmation before using tools. Just do it."
+ExecStart=/usr/bin/python3 /home/wdmms123/chat-to-responses-proxy/proxy.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
