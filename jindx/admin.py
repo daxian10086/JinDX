@@ -125,7 +125,10 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 .row label { min-width: 150px; font-weight: 500; font-size: 13px; }
 .row input, .row select, .row textarea { flex: 1; min-width: 180px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); padding: 6px 10px; font-size: 13px; }
 .row textarea { min-height: 56px; font-family: monospace; }
-.row input[type="checkbox"] { flex: 0; min-width: 0; accent-color: var(--accent); width: 16px; height: 16px; }
+.row input[type="checkbox"] { flex: 0; min-width: 40px; width: 40px; height: 22px; appearance: none; -webkit-appearance: none; background: #30363d; border: 1px solid var(--border); border-radius: 11px; cursor: pointer; position: relative; transition: background 0.2s; }
+.row input[type="checkbox"]::after { content: ''; position: absolute; top: 1px; left: 1px; width: 18px; height: 18px; border-radius: 50%; background: #8b949e; transition: all 0.2s; }
+.row input[type="checkbox"]:checked { background: #238636; border-color: #238636; }
+.row input[type="checkbox"]:checked::after { left: 19px; background: #fff; }
 .row input:focus, .row select:focus, .row textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,0.2); }
 .btn-row { display: flex; gap: 10px; margin-top: 16px; }
 .btn { padding: 8px 20px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
@@ -187,7 +190,7 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
     <div class="row"><label data-i18n-zh="最大响应体 (字节)" data-i18n-en="Max Body (bytes)">最大响应体 (字节)</label><input id="web_fetch_max_body" type="number" min="1000" max="1000000"></div>
   </div></div>
   <div class="card"><h2 class="section-toggle" onclick="toggleSection(this)"><span class="icon">&#128190;</span> <span data-i18n-zh="推理缓存" data-i18n-en="Reasoning Cache">推理缓存</span></h2><div class="section-body">
-    <div class="row"><label data-i18n-zh="启用缓存" data-i18n-en="Enable Cache">启用缓存</label><input id="enable_reasoning_cache" type="checkbox"></div>
+    <div class="row"><label for="enable_reasoning_cache" data-i18n-zh="启用缓存" data-i18n-en="Enable Cache">启用缓存</label><input id="enable_reasoning_cache" type="checkbox"></div>
     <div class="row"><label>Cache TTL (s)</label><input id="reasoning_cache_ttl" type="number" min="30" max="86400"></div>
   </div></div>
   <div class="btn-row">
@@ -211,8 +214,8 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
     <div class="row"><label data-i18n-zh="Top P" data-i18n-en="Top P">Top P</label><input id="claude_top_p" type="number" step="0.01" min="0" max="1" placeholder="(unset)"></div>
   </div></div>
   <div class="card"><h2 class="section-toggle" onclick="toggleSection(this)"><span class="icon">&#9881;</span> <span data-i18n-zh="模型选项" data-i18n-en="Model Options">模型选项</span></h2><div class="section-body">
-    <div class="row"><label data-i18n-zh="过滤 Thinking" data-i18n-en="Strip Thinking">过滤 Thinking</label><input id="claude_strip_thinking" type="checkbox" checked></div>
-    <div class="row"><label data-i18n-zh="跳过危险模式提示" data-i18n-en="Skip Dangerous Mode Prompt">跳过危险模式提示</label><input id="claude_skip_dangerous_mode" type="checkbox" checked></div>
+    <div class="row"><label for="claude_strip_thinking" data-i18n-zh="过滤 Thinking" data-i18n-en="Strip Thinking">过滤 Thinking</label><input id="claude_strip_thinking" type="checkbox" checked></div>
+    <div class="row"><label for="claude_skip_dangerous_mode" data-i18n-zh="跳过危险模式提示" data-i18n-en="Skip Dangerous Mode Prompt">跳过危险模式提示</label><input id="claude_skip_dangerous_mode" type="checkbox" checked></div>
   </div></div>
   <div class="btn-row">
     <button class="btn btn-primary" onclick="saveConfig()"><span data-i18n-zh="保存 Claude 配置" data-i18n-en="Save Claude">保存 Claude 配置</span></button>
