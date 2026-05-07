@@ -71,7 +71,7 @@ remote_tree = api("GET", f"/repos/{REPO}/git/trees/{REMOTE_TREE_SHA}?recursive=1
 
 # 解析本地 diff（格式: :old_mode new_mode old_sha new_sha status\tpath）
 local_diff = subprocess.run(
-    ["git", "diff-tree", "--no-commit-id", "-r", "HEAD"],
+    ["git", "-c", "core.quotepath=off", "diff-tree", "--no-commit-id", "-r", "HEAD"],
     capture_output=True, text=True
 )
 changed = {}   # path -> (blob_sha, mode)
