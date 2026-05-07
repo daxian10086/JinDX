@@ -161,13 +161,15 @@ mkdir -p "${CLAUDE_PROFILE_DIR}"
 cat > "${CLAUDE_PROFILE_DIR}/deepseek.json" << CLAUDE_EOF
 {
   "env": {
-    "ANTHROPIC_AUTH_TOKEN": "proxy-placeholder",
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:${PROXY_PORT}"
+    "ANTHROPIC_AUTH_TOKEN": "${DEEPSEEK_KEY}",
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:${PROXY_PORT}",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "${DEFAULT_MODEL}",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "${DEFAULT_MODEL}",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "${DEFAULT_MODEL}",
+    "ANTHROPIC_MODEL": "${DEFAULT_MODEL}"
   },
-  "permissions": {
-    "allow": [],
-    "deny": []
-  }
+  "model": "sonnet",
+  "skipDangerousModePermissionPrompt": true
 }
 CLAUDE_EOF
 chown -R "${SERVICE_USER}:${SERVICE_USER}" "/home/${SERVICE_USER}/.claude"
