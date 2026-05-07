@@ -154,6 +154,24 @@ systemctl restart jindx
 
 sleep 2
 
+# ── 配置 Claude Code ──────────────────────────────────
+log "配置 Claude Code..."
+CLAUDE_PROFILE_DIR="/home/${SERVICE_USER}/.claude/profiles"
+mkdir -p "${CLAUDE_PROFILE_DIR}"
+cat > "${CLAUDE_PROFILE_DIR}/deepseek.json" << CLAUDE_EOF
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "proxy-placeholder",
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:${PROXY_PORT}"
+  },
+  "permissions": {
+    "allow": [],
+    "deny": []
+  }
+}
+CLAUDE_EOF
+chown -R "${SERVICE_USER}:${SERVICE_USER}" "/home/${SERVICE_USER}/.claude"
+
 # ── 验证 ─────────────────────────────────────────────
 echo ""
 if systemctl is-active --quiet jindx; then
@@ -170,6 +188,10 @@ echo ""
 echo "  代理地址:     http://127.0.0.1:${PROXY_PORT}"
 echo "  管理面板:     http://127.0.0.1:${ADMIN_PORT}"
 echo "  健康检查:     curl http://127.0.0.1:${PROXY_PORT}/health"
+echo ""
+echo "  Claude Code 配置已写入:"
+echo "    ${CLAUDE_PROFILE_DIR}/deepseek.json"
+echo "  使用方式: claude --profile deepseek"
 echo ""
 echo "  常用命令:"
 echo "    systemctl status jindx      查看状态"
