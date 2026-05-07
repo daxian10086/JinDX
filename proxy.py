@@ -2514,6 +2514,9 @@ def _ensure_certs():
 # ── CONNECT tunnel server ───────────────────────────────────────────────────
 
 async def _run_connect_server():
+    if CONNECT_PORT == 0:
+        logger.info("CONNECT tunnel DISABLED (CONNECT_PORT=0)")
+        return
     """Run a raw TCP server that handles HTTP CONNECT + TLS termination,
     then transparently proxies the plain stream to the local HTTP/WS server."""
     _ensure_certs()
