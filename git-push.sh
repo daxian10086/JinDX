@@ -69,21 +69,27 @@ def api(method, path, data=None):
 # 获取远程 tree 内容
 remote_tree = api("GET", f"/repos/{REPO}/git/trees/{REMOTE_TREE_SHA}?recursive=1")
 
-# 解析本地 diff（格式: :old_mode new_mode old_sha new_sha status\tpath）
-local_diff = subprocess.run(
-    ["git", "-c", "core.quotepath=off", "diff-tree", "--no-commit-id", "-r", "HEAD"],
+# 获取本地完整 tree 列表（格式: <mode> <type> <sha>\t<path>）
+local_tree_output = subprocess.run(
+    ["git", "ls-tree", "-r", "HEAD^{tree}"],
     capture_output=True, text=True
 )
-changed = {}   # path -> (blob_sha, mode)
-deleted = set()
-for line in local_diff.stdout.strip().splitlines():
+local_files = {}  # path -> (blob_sha, mode)
+for line in local_tree_output.stdout.strip().splitlines():
     meta, path = line.split('\t', 1)
-    parts = meta.split()
-    status = parts[4]
-    if status == 'D':
+    mode, ftype, sha = meta.split()
+    local_files[path] = (sha, mode)
+
+# 对比远程 tree 找出完整差异
+remote_files = {item["path"]: item for item in remote_tree.get("tree", [])}
+changed = {}   # path -> (blob_sha, mode) — 新增或变更
+deleted = set()
+for path, (sha, mode) in local_files.items():
+    if path not in remote_files or remote_files[path]["sha"] != sha:
+        changed[path] = (sha, mode)
+for path in remote_files:
+    if path not in local_files:
         deleted.add(path)
-    else:
-        changed[path] = (parts[3], parts[1])  # (blob_sha, mode)
 
 print(f"变更: {list(changed.keys())} 删除: {list(deleted)}")
 
