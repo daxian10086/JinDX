@@ -2,6 +2,26 @@
 
 将 OpenAI Responses API / Anthropic Messages API 翻译为 DeepSeek Chat Completions API，支持 Codex CLI 和 Claude Code。
 
+## 快速开始
+
+在新服务器上三步完成部署：
+
+```bash
+git clone https://github.com/daxian10086/JinDX.git
+cd JinDX
+sudo ./deploy.sh
+```
+
+脚本交互式询问 DeepSeek API Key（其余配置回车默认即可），自动完成：
+
+1. 安装系统依赖（python3、redis、iptables-persistent 等）
+2. 安装 Python 包（fastapi、uvicorn、httpx、redis）
+3. 配置 `/etc/hosts` DNS 劫持 + iptables NAT 规则 + 规则持久化
+4. 创建 systemd 服务并启动
+5. 验证服务健康状态
+
+部署完成后访问 `http://<服务器IP>:8090` 进入管理面板，所有参数即时调整即时生效。
+
 ## 架构
 
 ```
