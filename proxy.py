@@ -214,6 +214,7 @@ def _load_config() -> dict:
         "claude_temperature": None,
         "claude_top_p": None,
         "claude_strip_thinking": True,
+        "claude_skip_dangerous_mode": True,
     }
     try:
         if CONFIG_FILE.exists():
@@ -2141,6 +2142,7 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
   </div></div>
   <div class="card"><h2 class="section-toggle" onclick="toggleSection(this)"><span class="icon">&#9881;</span> <span data-i18n-zh="模型选项" data-i18n-en="Model Options">模型选项</span></h2><div class="section-body">
     <div class="row"><label data-i18n-zh="过滤 Thinking" data-i18n-en="Strip Thinking">过滤 Thinking</label><input id="claude_strip_thinking" type="checkbox" checked></div>
+    <div class="row"><label data-i18n-zh="跳过危险模式提示" data-i18n-en="Skip Dangerous Mode Prompt">跳过危险模式提示</label><input id="claude_skip_dangerous_mode" type="checkbox" checked></div>
   </div></div>
   <div class="btn-row">
     <button class="btn btn-primary" onclick="saveConfig()"><span data-i18n-zh="保存 Claude 配置" data-i18n-en="Save Claude">保存 Claude 配置</span></button>
@@ -2241,6 +2243,7 @@ async function loadConfig(){
     document.getElementById('claude_temperature').value=cfg.claude_temperature!=null?cfg.claude_temperature:'';
     document.getElementById('claude_top_p').value=cfg.claude_top_p!=null?cfg.claude_top_p:'';
     document.getElementById('claude_strip_thinking').checked=cfg.claude_strip_thinking!==false;
+    document.getElementById('claude_skip_dangerous_mode').checked=cfg.claude_skip_dangerous_mode!==false;
     toast(t('配置已加载','Config loaded'),true);
   }catch(e){ toast(t('加载失败','Load failed')+': '+e,false); }
 }
@@ -2270,6 +2273,7 @@ async function saveConfig(){
     claude_temperature:document.getElementById('claude_temperature').value?parseFloat(document.getElementById('claude_temperature').value):null,
     claude_top_p:document.getElementById('claude_top_p').value?parseFloat(document.getElementById('claude_top_p').value):null,
     claude_strip_thinking:document.getElementById('claude_strip_thinking').checked,
+    claude_skip_dangerous_mode:document.getElementById('claude_skip_dangerous_mode').checked,
   };
   try{
     var r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
@@ -2375,7 +2379,7 @@ async def admin_set_config(request: Request):
         "enable_reasoning_cache", "reasoning_cache_ttl",
         "claude_deepseek_key", "claude_deepseek_base", "claude_default_model",
         "claude_reasoning_effort", "claude_max_position_embeddings", "claude_max_output_tokens",
-        "claude_temperature", "claude_top_p", "claude_strip_thinking",
+        "claude_temperature", "claude_top_p", "claude_strip_thinking", "claude_skip_dangerous_mode",
     }
     for key in body:
         if key in allowed_keys:

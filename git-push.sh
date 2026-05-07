@@ -116,6 +116,7 @@ tree_items = []
 for item in remote_tree.get("tree", []):
     remote_paths.add(item["path"])
     if item["path"] in deleted:
+        tree_items.append({"path": item["path"], "mode": item["mode"], "type": "blob", "sha": None})
         continue
     entry = {"path": item["path"], "mode": item["mode"], "type": item["type"]}
     if item["path"] in blob_map:
