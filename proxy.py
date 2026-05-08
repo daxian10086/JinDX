@@ -9,6 +9,7 @@ Chat Completions + Responses API proxy for DeepSeek V4 (and compatible models).
 
 import asyncio
 import logging
+import os
 import ssl
 from urllib.parse import urlparse
 
@@ -107,6 +108,10 @@ app.api_route("/backend-api/{path:path}", methods=["GET", "POST", "PUT", "DELETE
 # ── 启动 ────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Windows: asyncio.start_server + loop.start_tls 需要 SelectorEventLoop
+    if os.name == "nt":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     ensure_certs()
 
     async def _serve_all():

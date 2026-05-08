@@ -5,6 +5,7 @@ import base64
 import hashlib
 import logging
 import ssl
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import WebSocketDisconnect
@@ -16,12 +17,50 @@ logger = logging.getLogger(__name__)
 
 # ── TLS 证书管理 ──────────────────────────────────────────────────
 
-def ensure_certs():
-    """生成自签名证书用于 TLS 终止。"""
-    if CERT_FILE.exists() and KEY_FILE.exists():
-        return
+def _generate_cert_cryptography():
+    """使用 cryptography 库生成自签名证书（跨平台，无需 openssl）。"""
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=3650))
+        .add_extension(
+            x509.SubjectAlternativeName([
+                x509.DNSName("localhost"),
+                x509.DNSName("api.openai.com"),
+            ]),
+            critical=False,
+        )
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+
     CERT_DIR.mkdir(parents=True, exist_ok=True)
+    KEY_FILE.write_bytes(key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ))
+    CERT_FILE.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+
+
+def _generate_cert_openssl():
+    """使用 openssl CLI 生成自签名证书（回退选项）。"""
     from subprocess import run
+    CERT_DIR.mkdir(parents=True, exist_ok=True)
     run([
         "openssl", "req", "-x509", "-newkey", "rsa:2048",
         "-keyout", str(KEY_FILE), "-out", str(CERT_FILE),
@@ -32,7 +71,34 @@ def ensure_certs():
         "-addext", "keyUsage=digitalSignature,keyEncipherment",
         "-addext", "extendedKeyUsage=serverAuth",
     ], check=True, capture_output=True)
-    logger.info(f"Generated self-signed TLS cert: {CERT_FILE}")
+
+
+def ensure_certs():
+    """生成自签名证书用于 TLS 终止。优先使用 cryptography 库，回退到 openssl CLI。"""
+    if CERT_FILE.exists() and KEY_FILE.exists():
+        return
+
+    # 优先尝试 cryptography（跨平台）
+    try:
+        _generate_cert_cryptography()
+        logger.info(f"Generated self-signed TLS cert (cryptography): {CERT_FILE}")
+        return
+    except ImportError:
+        logger.debug("cryptography not available, falling back to openssl")
+    except Exception as e:
+        logger.debug(f"cryptography cert generation failed: {e}, falling back to openssl")
+
+    # 回退到 openssl CLI
+    try:
+        _generate_cert_openssl()
+        logger.info(f"Generated self-signed TLS cert (openssl): {CERT_FILE}")
+    except FileNotFoundError:
+        logger.warning(
+            "openssl not found. Install openssl or 'pip install cryptography' to enable TLS. "
+            "The proxy will still work for HTTP/WS on port %d.", PROXY_PORT
+        )
+    except Exception as e:
+        logger.warning("Certificate generation failed: %s. TLS may not work.", e)
 
 
 # ── WebSocket 隧道适配器 ─────────────────────────────────────────

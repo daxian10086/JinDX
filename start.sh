@@ -28,8 +28,15 @@ echo "Port:    $PROXY_PORT (admin: $ADMIN_PORT)"
 echo "Redis:   $REDIS_HOST:$REDIS_PORT"
 echo ""
 
-# Install deps if needed
-python3 -c "import fastapi,uvicorn,httpx,redis" 2>/dev/null || \
-  pip install --break-system-packages -q fastapi uvicorn httpx redis 2>/dev/null
+# 安装依赖（跨平台：macOS 不需要 --break-system-packages）
+install_deps() {
+    python3 -c "import fastapi,uvicorn,httpx,redis,cryptography" 2>/dev/null && return
+    if [ "$(uname -s)" = "Darwin" ]; then
+        pip3 install -q fastapi "uvicorn[standard]" httpx redis cryptography 2>/dev/null
+    else
+        pip3 install --break-system-packages -q fastapi "uvicorn[standard]" httpx redis cryptography 2>/dev/null
+    fi
+}
+install_deps
 
 exec python3 proxy.py

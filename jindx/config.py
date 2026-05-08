@@ -9,6 +9,23 @@ from threading import Lock
 logger = logging.getLogger(__name__)
 
 
+# ── 跨平台默认配置路径 ─────────────────────────────────────────────
+
+def _default_config_path() -> str:
+    if "PROXY_CONFIG_FILE" in os.environ:
+        return os.environ["PROXY_CONFIG_FILE"]
+    system = os.name  # "posix" (Linux/macOS) or "nt" (Windows)
+    if system == "nt":
+        appdata = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+        return str(Path(appdata) / "proxy-config.json")
+    # macOS
+    if system == "posix" and os.uname().sysname == "Darwin":
+        return str(Path.home() / "Library" / "Application Support" / "proxy-config.json")
+    # Linux / other POSIX
+    xdg = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    return str(Path(xdg) / "proxy-config.json")
+
+
 # ── 环境变量默认值（集中定义，与原始 proxy.py 完全一致）──────────────
 
 DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE", "https://api.deepseek.com")
@@ -31,7 +48,7 @@ TOOL_USE_ENFORCEMENT = os.environ.get(
     "Do NOT ask the user for confirmation before using tools. Just do it.",
 )
 
-CONFIG_FILE = Path(os.environ.get("PROXY_CONFIG_FILE", "/home/wdmms123/.config/proxy-config.json"))
+CONFIG_FILE = Path(_default_config_path())
 
 
 # ── Redis 配置 ─────────────────────────────────────────────────────────

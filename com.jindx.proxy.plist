@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jindx.proxy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/opt/jindx/proxy.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/opt/jindx</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DEEPSEEK_BASE</key>
+        <string>https://api.deepseek.com</string>
+        <key>DEEPSEEK_KEY</key>
+        <string>sk-your-deepseek-api-key</string>
+        <key>DEFAULT_MODEL</key>
+        <string>deepseek-v4-pro</string>
+        <key>PROXY_PORT</key>
+        <string>8080</string>
+        <key>ADMIN_PORT</key>
+        <string>8090</string>
+        <key>REDIS_HOST</key>
+        <string>127.0.0.1</string>
+        <key>REDIS_PORT</key>
+        <string>6379</string>
+        <key>REDIS_DB</key>
+        <string>0</string>
+        <key>CONNECT_PORT</key>
+        <string>8443</string>
+        <key>TLS_PORT</key>
+        <string>8444</string>
+        <key>DEFAULT_REASONING_EFFORT</key>
+        <string>max</string>
+        <key>MAX_POSITION_EMBEDDINGS</key>
+        <string>1000000</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/opt/jindx/logs/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/opt/jindx/logs/stderr.log</string>
+</dict>
+</plist>
