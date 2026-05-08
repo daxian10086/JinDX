@@ -27,11 +27,15 @@ Write-Host "Port:    $env:PROXY_PORT (admin: $env:ADMIN_PORT)"
 Write-Host "Redis:   ${env:REDIS_HOST}:$env:REDIS_PORT"
 Write-Host ""
 
-# 检查并安装依赖
+# 检查并安装依赖（默认源不可用则切到清华镜像）
 $depsOk = python -c "import fastapi,uvicorn,httpx,redis,cryptography" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "安装 Python 依赖..."
-    pip install -q fastapi "uvicorn[standard]" httpx redis cryptography
+    pip install -q fastapi "uvicorn[standard]" httpx redis cryptography 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "默认 PyPI 不可用，切换到清华镜像..."
+        pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" httpx redis cryptography
+    }
 }
 
 python proxy.py

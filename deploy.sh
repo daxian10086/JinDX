@@ -59,13 +59,27 @@ fi
 echo ""
 log "安装系统依赖..."
 
-apt-get update -qq
+# apt 镜像回退：默认源不可用则切到阿里云镜像
+if ! apt-get update -qq 2>/dev/null; then
+    warn "默认 apt 源不可用，切换到阿里云镜像..."
+    sed -i 's|http://.*archive.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true
+    sed -i 's|https://.*archive.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true
+    apt-get update -qq || err "apt 镜像源也不可用，请检查网络"
+fi
+
 apt-get install -y -qq python3 python3-pip python3-venv redis-server openssl \
     iptables netfilter-persistent 2>&1 | tail -5
 
 # ── 安装 Python 依赖 ─────────────────────────────────
 log "安装 Python 依赖..."
-pip3 install --break-system-packages -q fastapi uvicorn[standard] httpx redis 2>&1 | tail -3
+
+# pip 镜像回退：默认源不可用则切到清华镜像
+pip3 install --break-system-packages -q fastapi "uvicorn[standard]" httpx redis cryptography 2>/dev/null || {
+    warn "默认 PyPI 不可用，切换到清华镜像..."
+    pip3 install --break-system-packages -q \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple \
+        fastapi "uvicorn[standard]" httpx redis cryptography
+}
 
 # ── 创建目录 ─────────────────────────────────────────
 log "创建安装目录..."

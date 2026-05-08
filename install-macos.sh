@@ -58,11 +58,19 @@ if ! command -v python3 &>/dev/null; then
     err "请先安装 Python 3: brew install python3"
 fi
 
-pip3 install -q fastapi "uvicorn[standard]" httpx redis cryptography 2>&1 | tail -5
+# pip 镜像回退：默认源不可用则切到清华镜像
+pip3 install -q fastapi "uvicorn[standard]" httpx redis cryptography 2>/dev/null || {
+    warn "默认 PyPI 不可用，切换到清华镜像..."
+    pip3 install -q \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple \
+        fastapi "uvicorn[standard]" httpx redis cryptography
+}
 
 # ── 安装 Redis（可选）─────────────────────────────────
 if ! command -v redis-server &>/dev/null; then
     warn "Redis 未安装。运行 'brew install redis' 以启用推理缓存。"
+    warn "  国内用户可设置 brew 镜像："
+    warn "  export HOMEBREW_BOTTLE_DOMAIN=https://mirrors.tuna.tsinghua.edu.cn/homebrew-bottles"
 else
     log "Redis 已安装"
     brew services start redis 2>/dev/null || true

@@ -28,11 +28,15 @@ echo Port:    %PROXY_PORT% (admin: %ADMIN_PORT%)
 echo Redis:   %REDIS_HOST%:%REDIS_PORT%
 echo.
 
-REM 检查并安装依赖
+REM 检查并安装依赖（默认源不可用则切到清华镜像）
 python -c "import fastapi,uvicorn,httpx,redis,cryptography" 2>NUL
 if errorlevel 1 (
     echo 安装 Python 依赖...
-    pip install -q fastapi "uvicorn[standard]" httpx redis cryptography
+    pip install -q fastapi "uvicorn[standard]" httpx redis cryptography 2>NUL
+    if errorlevel 1 (
+        echo 默认 PyPI 不可用，切换到清华镜像...
+        pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" httpx redis cryptography
+    )
 )
 
 python proxy.py

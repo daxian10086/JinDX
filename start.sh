@@ -28,14 +28,26 @@ echo "Port:    $PROXY_PORT (admin: $ADMIN_PORT)"
 echo "Redis:   $REDIS_HOST:$REDIS_PORT"
 echo ""
 
-# 安装依赖（跨平台：macOS 不需要 --break-system-packages）
+# 安装依赖（跨平台兼容 + 国内镜像回退）
+# 优先使用默认源（VPN 下速度快），不可用时切到清华镜像
+MIRROR="https://pypi.tuna.tsinghua.edu.cn/simple"
+PIP_PKGS="fastapi \"uvicorn[standard]\" httpx redis cryptography"
+
 install_deps() {
     python3 -c "import fastapi,uvicorn,httpx,redis,cryptography" 2>/dev/null && return
-    if [ "$(uname -s)" = "Darwin" ]; then
-        pip3 install -q fastapi "uvicorn[standard]" httpx redis cryptography 2>/dev/null
-    else
-        pip3 install --break-system-packages -q fastapi "uvicorn[standard]" httpx redis cryptography 2>/dev/null
-    fi
+
+    _pip_install() {
+        if [ "$(uname -s)" = "Darwin" ]; then
+            pip3 install -q $PIP_PKGS 2>/dev/null && return
+            echo "默认 PyPI 不可用，切换到清华镜像..."
+            pip3 install -q -i "$MIRROR" $PIP_PKGS
+        else
+            pip3 install --break-system-packages -q $PIP_PKGS 2>/dev/null && return
+            echo "默认 PyPI 不可用，切换到清华镜像..."
+            pip3 install --break-system-packages -q -i "$MIRROR" $PIP_PKGS
+        fi
+    }
+    _pip_install
 }
 install_deps
 
