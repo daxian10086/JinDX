@@ -1,4 +1,4 @@
-# Chat-to-Responses Proxy 说明
+# JinDX — DeepSeek API Proxy
 
 将 OpenAI Responses API / Anthropic Messages API 翻译为 DeepSeek Chat Completions API，支持 Codex CLI 和 Claude Code。
 
@@ -12,7 +12,7 @@ cd JinDX
 sudo ./deploy.sh
 ```
 
-脚本交互式询问 DeepSeek API Key，自动完成 systemd 服务部署、hosts 劫持、iptables 规则。详见下方"Linux 部署"。
+交互式输入 DeepSeek API Key，自动完成 systemd 服务部署、hosts 劫持、iptables 规则。默认源不可用时自动切到阿里云/清华镜像。
 
 ### macOS
 
@@ -30,7 +30,7 @@ pip3 install fastapi "uvicorn[standard]" httpx redis cryptography
 ./start.sh
 ```
 
-install-macos.sh 会：安装 Python 依赖 → 创建 launchd 服务 → 配置 Claude Code profile → 启动。配置文件自动存入 `~/Library/Application Support/proxy-config.json`。
+install-macos.sh 会：安装 Python 依赖 → 创建 launchd 服务 → 配置 Claude Code profile → 启动。配置文件存入 `~/Library/Application Support/proxy-config.json`。默认源不可用时自动切到清华镜像。
 
 **launchd 服务管理**：
 
@@ -41,11 +41,11 @@ launchctl start com.jindx.proxy             # 启动
 launchctl unload ~/Library/LaunchAgents/com.jindx.proxy.plist  # 卸载
 ```
 
-日志位置：`/opt/jindx/logs/stdout.log` 和 `stderr.log`。
+日志：`/opt/jindx/logs/stdout.log`、`stderr.log`。
 
 ### Windows
 
-**前置要求**：Python 3.10+（安装时勾选"Add Python to PATH"），可选安装 Redis for Windows 启用推理缓存。
+**前置要求**：Python 3.10+（安装时勾选"Add Python to PATH"），可选安装 Redis for Windows。
 
 ```powershell
 git clone https://github.com/daxian10086/JinDX.git
@@ -58,35 +58,34 @@ cd JinDX
 start.bat
 ```
 
-首次运行自动安装依赖（fastapi, uvicorn, httpx, redis, cryptography）。脚本已配置好所有默认环境变量，可直接用。
+首次运行自动安装依赖，默认源不可用时自动切到清华镜像。
 
 **自定义参数**：
 
 ```powershell
-# PowerShell 设置环境变量后启动
+# PowerShell
 $env:DEEPSEEK_KEY="sk-xxx"
 $env:PROXY_PORT="9000"
 .\start.ps1
 ```
 
 ```cmd
-REM CMD 方式
+REM CMD
 set DEEPSEEK_KEY=sk-xxx
 set PROXY_PORT=9000
 start.bat
 ```
 
-配置文件位置：`%APPDATA%\proxy-config.json`（通常为 `C:\Users\<用户名>\AppData\Roaming\proxy-config.json`）。
+配置文件：`%APPDATA%\proxy-config.json`。
 
-**设置开机自启**（可选）：创建 `start.ps1` 的快捷方式放入 `shell:startup` 文件夹，或使用任务计划程序。
+**开机自启**（可选）：创建 `start.ps1` 快捷方式放入 `shell:startup` 文件夹。
 
 ### 开发环境（所有平台通用）
 
 ```bash
 pip install fastapi "uvicorn[standard]" httpx redis cryptography
 ./start.sh          # Linux/macOS
-# 或 Windows
-start.bat / start.ps1
+start.bat           # Windows
 ```
 
 部署完成后访问 `http://127.0.0.1:8090` 进入管理面板，所有参数即时调整即时生效。
@@ -95,11 +94,35 @@ start.bat / start.ps1
 
 | 功能 | Linux | macOS | Windows |
 |------|-------|-------|---------|
-| 后台服务 | systemd | launchd | N/A（手动启动） |
+| 后台服务 | systemd | launchd | 手动启动 |
 | DNS 劫持 | /etc/hosts + iptables | /etc/hosts | hosts 文件 |
 | TLS 证书 | openssl/cryptography | cryptography | cryptography |
 | 安装脚本 | deploy.sh | install-macos.sh | start.ps1 |
 | 开发启动 | start.sh | start.sh | start.bat / start.ps1 |
+| 配置文件 | `~/.config/proxy-config.json` | `~/Library/Application Support/` | `%APPDATA%\` |
+| 镜像回退 | apt→阿里云, pip→清华 | pip→清华, brew提示 | pip→清华 |
+
+## 环境变量
+
+所有环境变量均有默认值，仅 `DEEPSEEK_KEY` 必须修改。
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `DEEPSEEK_KEY` | — | **必填**，DeepSeek API Key |
+| `DEEPSEEK_BASE` | `https://api.deepseek.com` | 上游 API 地址 |
+| `DEFAULT_MODEL` | `deepseek-v4-pro` | 默认模型 |
+| `PROXY_PORT` | `8080` | HTTP/WS 代理端口 |
+| `TLS_PORT` | `8444` | 直接 TLS 端口 |
+| `CONNECT_PORT` | `8443` | CONNECT 隧道端口 |
+| `ADMIN_PORT` | `8090` | Web 管理面板端口 |
+| `REDIS_HOST` | `127.0.0.1` | Redis 地址 |
+| `REDIS_PORT` | `6379` | Redis 端口 |
+| `REDIS_DB` | `0` | Redis 数据库编号 |
+| `DEFAULT_REASONING_EFFORT` | — | 推理强度 (min/low/medium/high/max) |
+| `MAX_POSITION_EMBEDDINGS` | `1000000` | 最大上下文长度 |
+| `REASONING_CACHE_MAX` | `10` | 每会话最多缓存的推理条数 |
+| `REASONING_CACHE_TTL` | `600` | 推理缓存有效期（秒） |
+| `PROXY_CONFIG_FILE` | 平台自适应 | 配置文件路径 |
 
 ## 架构
 
@@ -135,7 +158,7 @@ start.bat / start.ps1
 **两条流量路径**：
 
 1. **HTTP 直连** — Claude Code 设置 `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`，直接走 HTTP 代理
-2. **HTTPS 劫持** — Codex CLI 请求 `https://api.openai.com` → `/etc/hosts` 指向 127.0.0.1 → iptables/loopback 将 :443 转发到 :8444（TLS 代理），或通过 CONNECT 隧道 :8443
+2. **HTTPS 劫持** — Codex CLI 请求 `https://api.openai.com` → hosts 指向 127.0.0.1 → iptables/loopback 将 :443 转发到 :8444，或通过 CONNECT 隧道 :8443
 
 **请求处理流程**：
 
@@ -150,55 +173,91 @@ Responses API 请求
   → 缓存本轮推理内容
 ```
 
+## API 端点
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/v1/chat/completions`、`/chat/completions` | Chat Completions 透传 |
+| POST | `/v1/responses`、`/responses` | Responses→Chat 翻译 |
+| WS | `/v1/responses`、`/responses` | WebSocket Responses 翻译 |
+| POST/WS | `/backend-api/codex/responses` | Codex 专用 Responses 路由 |
+| GET | `/v1/models`、`/models` | 模型列表 |
+| GET | `/health` | 健康检查 |
+| GET | `/backend-api/codex/models` | Codex 模型目录 |
+| POST | `/backend-api/codex/analytics-events/events` | Codex 遥测桩 |
+| GET | `/backend-api/plugins/featured` | 插件列表（空） |
+| POST | `/backend-api/wham/apps` | WHAM 桩 |
+| ANY | `/backend-api/{path}` | Codex 后端兜底 |
+
+## 管理界面
+
+浏览器打开 `http://127.0.0.1:8090`，三个标签页：
+
+### Codex 标签
+
+- **上游连接**：DeepSeek API Key、Base URL、默认模型
+- **生成参数**：推理强度、上下文窗口、最大输出、Temperature、Top P
+- **网页抓取**：最大 URL 数、超时、响应体上限
+- **推理缓存**：开关 + TTL（Redis 优先，内存兜底）
+
+### Claude 标签
+
+- **上游连接**：独立 API Key、Base URL、默认模型
+- **生成参数**：推理强度、上下文窗口、最大输出、Temperature、Top P
+- **模型选项**：过滤 Thinking、跳过危险模式提示
+
+所有配置保存即时生效，无需重启。
+
+### 统计面板
+
+- 总请求数、活跃流数、错误率、缓存命中率
+- 实时刷新，可查看最近日志
+
 ## 文件清单
 
 ```
 chat-to-responses-proxy/
 ├── proxy.py                         # 主程序入口
-├── jindx/                           # 模块
-│   ├── config.py                    # 运行时配置（线程安全）
-│   ├── stats.py                     # 统计计数
-│   ├── web_fetch.py                 # 网页抓取
-│   ├── cache.py                     # 推理缓存（Redis + 内存）
-│   ├── protocol.py                  # Responses ↔ Chat 翻译
-│   ├── routes.py                    # HTTP/SSE/WebSocket 路由
-│   ├── codex.py                     # Codex RPC 模拟
-│   ├── admin.py                     # 管理 API + Web UI
-│   └── tunnel.py                    # TLS 证书 + CONNECT 隧道
+├── jindx/                           # Python 模块
+│   ├── __init__.py
+│   ├── config.py                    # 运行时配置（线程安全 + 跨平台路径）
+│   ├── stats.py                     # 统计计数 + 日志缓冲
+│   ├── web_fetch.py                 # URL 检测 / 预取 / 抓取
+│   ├── cache.py                     # 推理缓存（Redis + 内存双写 + 自动重连）
+│   ├── protocol.py                  # Responses ↔ Chat 格式翻译
+│   ├── routes.py                    # HTTP / SSE / WebSocket 路由
+│   ├── codex.py                     # Codex RPC 模拟 + 模型目录
+│   ├── admin.py                     # Web 管理 API + 内嵌 HTML UI
+│   └── tunnel.py                    # TLS 证书生成 + CONNECT 隧道
 ├── start.sh                         # Linux/macOS 开发启动
 ├── start.bat                        # Windows CMD 启动
 ├── start.ps1                        # Windows PowerShell 启动
-├── deploy.sh                        # Linux 一键部署
-├── install-macos.sh                 # macOS 安装脚本
+├── deploy.sh                        # Linux 一键部署（systemd + iptables）
+├── install-macos.sh                 # macOS 安装脚本（launchd）
 ├── com.jindx.proxy.plist            # macOS launchd 服务定义
 ├── chat-responses-proxy.service     # Linux systemd 服务模板
+├── git-push.sh                      # 通过 GitHub API 推送（绕过网络限制）
 ├── requirements.txt                 # Python 依赖
 └── README.md
 ```
 
-## API 端点
+## 关键实现细节
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/v1/chat/completions` | 直接透传 DeepSeek |
-| POST | `/v1/responses` | Responses→Chat 翻译 |
-| WS | `/v1/responses` | WebSocket 翻译 |
-| POST/WS | `/backend-api/codex/responses` | Codex 专用路由 |
-| GET | `/v1/models` | 模型列表 |
-| GET | `/health` | 健康检查 |
+### 多工具调用合并
 
-## 管理界面
+DeepSeek 要求同一轮的所有 tool_calls 必须在一个 assistant 消息中。代理自动将 Codex 发送的多个独立 function_call 合并为一条符合要求的消息。
 
-浏览器打开 `http://127.0.0.1:8090` 可调整以下全部参数，保存即时生效：
+### 网页预取
 
-- **模型映射**: OpenAI 模型名 → DeepSeek 模型名
-- **推理强度**: min/low/medium/high/max
-- **最大输出 token 数**
-- **最大上下文长度** (max_position_embeddings)：默认 1M tokens
-- **Temperature / Top P**
-- **Tool Use 强制调用**: 开关 + 自定义提示词
-- **网页抓取**: URL 数量上限、超时、响应体上限
-- **推理缓存**: 开关 + TTL（Redis 优先，内存兜底）
+发现用户消息中的 URL 后，代理预先抓取网页内容注入对话上下文，模型直接使用内容而无需发起 web_fetch 工具调用，绕过 Codex 沙箱的网络限制。
+
+### 推理缓存
+
+DeepSeek 思考模式要求所有 assistant 消息都携带 `reasoning_content`。代理缓存每轮对话的推理内容（Redis 优先，内存兜底），下一轮注入到所有历史 assistant 消息中。支持 Redis 断连自动重连。
+
+### TLS 证书自动生成
+
+首次启动自动生成自签名证书（SAN: localhost, api.openai.com），有效期 10 年。优先使用 `cryptography` 库（跨平台），回退到 `openssl` CLI。
 
 ## 常用命令
 
@@ -210,6 +269,9 @@ curl -s http://127.0.0.1:8080/health
 curl -X POST http://127.0.0.1:8090/config \
   -H "Content-Type: application/json" \
   -d '{"temperature": 0.7, "reasoning_effort": "high"}'
+
+# 推送代码（网络受限时通过 API）
+./git-push.sh
 ```
 
 ### Linux (systemd)
