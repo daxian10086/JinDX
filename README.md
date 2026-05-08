@@ -104,14 +104,50 @@ start.bat / start.ps1
 ## 架构
 
 ```
-Codex CLI ─── OPENAI_BASE_URL ───▶ proxy (8080) ───▶ api.deepseek.com
-                                     ▲
-                                     │  /v1/responses → /v1/chat/completions
-Claude Code ─ ANTHROPIC_BASE_URL ────┘
-                                      ▼
-HTTPS 流量 ─── hosts 劫持 → 127.0.0.1:443 ─── proxy TLS (8444)
-                                                  ▲
-管理面板 ─── http://127.0.0.1:8090 ────────────────┘
+                          ┌──────────────────────────────────────┐
+                          │            JinDX Proxy               │
+                          │                                      │
+  Codex CLI ──────────────┼──▶ 8444 (TLS 直连) ─┐                │
+  (OPENAI_BASE_URL)       │                      │                │
+                          │  Claude Code ───────▶ 8080 (HTTP/WS) │
+                          │  (ANTHROPIC_BASE_URL)  ▲    ▲         │
+                          │                       │    │         │
+                          │  HTTPS_PROXY ───▶ 8443 (CONNECT+TLS) │
+                          │  (Codex https_proxy)  ─────┘         │
+                          │                                      │
+                          │  8090 (Admin UI) ─── Web 管理界面     │
+                          └──────────────────────────────────────┘
+                                          │
+                                          ▼
+                                  api.deepseek.com
+                               (Chat Completions API)
+```
+
+**四个服务端口**：
+
+| 端口 | 协议 | 用途 |
+|------|------|------|
+| 8080 | HTTP/WS | Responses API 翻译 + SSE 流式 + WebSocket |
+| 8443 | TCP/TLS | HTTP CONNECT 隧道（Codex CLI 的 https_proxy） |
+| 8444 | HTTPS | 直接 TLS 终止（配合 hosts 劫持拦截 api.openai.com:443） |
+| 8090 | HTTP | Web 管理面板 |
+
+**两条流量路径**：
+
+1. **HTTP 直连** — Claude Code 设置 `ANTHROPIC_BASE_URL=http://127.0.0.1:8080`，直接走 HTTP 代理
+2. **HTTPS 劫持** — Codex CLI 请求 `https://api.openai.com` → `/etc/hosts` 指向 127.0.0.1 → iptables/loopback 将 :443 转发到 :8444（TLS 代理），或通过 CONNECT 隧道 :8443
+
+**请求处理流程**：
+
+```
+Responses API 请求
+  → 模型名映射（gpt-5.5 → deepseek-v4-pro）
+  → 网页预取（发现 URL 自动抓取注入上下文）
+  → 推理缓存注入（上轮 thinking → assistant 消息）
+  → 转换为 Chat Completions 格式
+  → 发送到 api.deepseek.com
+  → SSE 翻译回 Responses 事件流
+  → 缓存本轮推理内容
 ```
 
 ## 文件清单
