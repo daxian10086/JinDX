@@ -12,37 +12,82 @@ cd JinDX
 sudo ./deploy.sh
 ```
 
+脚本交互式询问 DeepSeek API Key，自动完成 systemd 服务部署、hosts 劫持、iptables 规则。详见下方"Linux 部署"。
+
 ### macOS
+
+**前置要求**：Python 3.10+，可选 `brew install redis` 启用推理缓存。
 
 ```bash
 git clone https://github.com/daxian10086/JinDX.git
 cd JinDX
+
+# 方式一：一键安装（含 launchd 后台服务）
 bash install-macos.sh
+
+# 方式二：手动启动（开发/测试）
+pip3 install fastapi "uvicorn[standard]" httpx redis cryptography
+./start.sh
 ```
 
+install-macos.sh 会：安装 Python 依赖 → 创建 launchd 服务 → 配置 Claude Code profile → 启动。配置文件自动存入 `~/Library/Application Support/proxy-config.json`。
+
+**launchd 服务管理**：
+
+```bash
+launchctl list com.jindx.proxy              # 查看状态
+launchctl stop com.jindx.proxy              # 停止
+launchctl start com.jindx.proxy             # 启动
+launchctl unload ~/Library/LaunchAgents/com.jindx.proxy.plist  # 卸载
+```
+
+日志位置：`/opt/jindx/logs/stdout.log` 和 `stderr.log`。
+
 ### Windows
+
+**前置要求**：Python 3.10+（安装时勾选"Add Python to PATH"），可选安装 Redis for Windows 启用推理缓存。
 
 ```powershell
 git clone https://github.com/daxian10086/JinDX.git
 cd JinDX
+
+# PowerShell（推荐）
+.\start.ps1
+
+# 或 CMD
+start.bat
+```
+
+首次运行自动安装依赖（fastapi, uvicorn, httpx, redis, cryptography）。脚本已配置好所有默认环境变量，可直接用。
+
+**自定义参数**：
+
+```powershell
+# PowerShell 设置环境变量后启动
+$env:DEEPSEEK_KEY="sk-xxx"
+$env:PROXY_PORT="9000"
 .\start.ps1
 ```
+
+```cmd
+REM CMD 方式
+set DEEPSEEK_KEY=sk-xxx
+set PROXY_PORT=9000
+start.bat
+```
+
+配置文件位置：`%APPDATA%\proxy-config.json`（通常为 `C:\Users\<用户名>\AppData\Roaming\proxy-config.json`）。
+
+**设置开机自启**（可选）：创建 `start.ps1` 的快捷方式放入 `shell:startup` 文件夹，或使用任务计划程序。
 
 ### 开发环境（所有平台通用）
 
 ```bash
 pip install fastapi "uvicorn[standard]" httpx redis cryptography
 ./start.sh          # Linux/macOS
-# 或
-start.bat           # Windows CMD
+# 或 Windows
+start.bat / start.ps1
 ```
-
-脚本交互式询问 DeepSeek API Key（其余配置回车默认即可），自动完成：
-
-1. 安装系统依赖 / Python 包
-2. 配置 /etc/hosts DNS 劫持（Linux/macOS）
-3. 创建后台服务并启动（systemd / launchd）
-4. 验证服务健康状态
 
 部署完成后访问 `http://127.0.0.1:8090` 进入管理面板，所有参数即时调整即时生效。
 
