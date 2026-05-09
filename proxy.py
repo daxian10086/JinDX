@@ -48,7 +48,8 @@ async def forward_proxy_middleware(request: Request, call_next):
 # ── 导入路由处理函数 ────────────────────────────────────────────
 
 from jindx.routes import (
-    chat_completions, responses_http, list_models, health,
+    
+    chat_completions, responses_http, responses_compact, list_models, health,
     handle_ws_session,
 )
 from jindx.codex import (
@@ -84,6 +85,10 @@ app.post("/chat/completions")(chat_completions)
 app.post("/v1/responses")(responses_http)
 app.post("/responses")(responses_http)
 app.post("/backend-api/codex/responses")(responses_http)
+
+# Compact endpoint
+app.post("/v1/responses/compact")(responses_compact)
+app.post("/responses/compact")(responses_compact)
 
 # Responses WebSocket
 app.websocket("/v1/responses")(_make_ws_endpoint)
