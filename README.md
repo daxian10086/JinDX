@@ -177,6 +177,8 @@ Responses API 请求
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| POST | `/v1/messages`、`/messages` | Anthropic Messages→Chat 翻译（Claude Code） |
+| GET | `/v1/models/claude` | Claude Code 模型列表 |
 | POST | `/v1/chat/completions`、`/chat/completions` | Chat Completions 透传 |
 | POST | `/v1/responses`、`/responses` | Responses→Chat 翻译 |
 | WS | `/v1/responses`、`/responses` | WebSocket Responses 翻译 |
@@ -227,6 +229,7 @@ chat-to-responses-proxy/
 │   ├── protocol.py                  # Responses ↔ Chat 格式翻译
 │   ├── routes.py                    # HTTP / SSE / WebSocket 路由
 │   ├── codex.py                     # Codex RPC 模拟 + 模型目录
+│   ├── claude.py                     # Anthropic Messages ↔ DeepSeek 协议翻译
 │   ├── admin.py                     # Web 管理 API + 内嵌 HTML UI
 │   └── tunnel.py                    # TLS 证书生成 + CONNECT 隧道
 ├── start.sh                         # Linux/macOS 开发启动

@@ -23,6 +23,7 @@ from jindx.admin import admin_app
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 app = FastAPI(title="Chat-Responses-WebSocket Proxy")
 
 
@@ -55,6 +56,9 @@ from jindx.routes import (
 from jindx.codex import (
     codex_models, codex_analytics, codex_plugins, codex_wham,
     codex_backend_fallback,
+)
+from jindx.claude import (
+    claude_messages, claude_models,
 )
 
 
@@ -109,6 +113,11 @@ app.get("/backend-api/plugins/featured")(codex_plugins)
 app.post("/backend-api/wham/apps")(codex_wham)
 app.api_route("/backend-api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])(codex_backend_fallback)
 
+# Claude Code — Anthropic Messages API
+app.post("/v1/messages")(claude_messages)
+app.post("/messages")(claude_messages)
+app.get("/v1/models/claude")(claude_models)
+
 
 # ── 启动 ────────────────────────────────────────────────────────
 
@@ -126,26 +135,40 @@ if __name__ == "__main__":
 
         connect_task = asyncio.create_task(_run_connect_server())
 
-        http_config = uvicorn.Config(app, host="0.0.0.0", port=PROXY_PORT)
+        # 提前绑定 socket，避免 uvicorn 0.46.0 在 asyncio.gather 并发时的自冲突
+        import socket as _socket
+
+        http_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        http_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        http_sock.bind(("0.0.0.0", PROXY_PORT))
+        http_sock.listen()
+
+        tls_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        tls_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        tls_sock.bind(("0.0.0.0", TLS_PORT))
+        tls_sock.listen()
+
+        admin_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        admin_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        admin_sock.bind(("0.0.0.0", ADMIN_PORT))
+        admin_sock.listen()
+
+        http_config = uvicorn.Config(app, host="0.0.0.0", port=PROXY_PORT, loop="asyncio")
         tls_config = uvicorn.Config(
-            app, host="0.0.0.0", port=TLS_PORT,
+            app, host="0.0.0.0", port=TLS_PORT, loop="asyncio",
             ssl_certfile=str(CERT_FILE), ssl_keyfile=str(KEY_FILE),
         )
-        admin_config = uvicorn.Config(admin_app, host="0.0.0.0", port=ADMIN_PORT)
+        admin_config = uvicorn.Config(admin_app, host="0.0.0.0", port=ADMIN_PORT, loop="asyncio")
 
         http_server = uvicorn.Server(http_config)
         tls_server = uvicorn.Server(tls_config)
         admin_server = uvicorn.Server(admin_config)
 
-        logger.info(f"Starting HTTP/WS proxy on 0.0.0.0:{PROXY_PORT}")
-        logger.info(f"Starting direct TLS proxy on 0.0.0.0:{TLS_PORT}")
-        logger.info(f"Starting admin UI on 0.0.0.0:{ADMIN_PORT}")
-
         await asyncio.gather(
             connect_task,
-            http_server.serve(),
-            tls_server.serve(),
-            admin_server.serve(),
+            http_server.serve(sockets=[http_sock]),
+            tls_server.serve(sockets=[tls_sock]),
+            admin_server.serve(sockets=[admin_sock]),
         )
 
     asyncio.run(_serve_all())
