@@ -25,7 +25,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # ── 用户配置 ─────────────────────────────────────────
-INSTALL_DIR="/opt/jindx"
+INSTALL_DIR="/home/wdmms123/jindx"
 SERVICE_USER="${SUDO_USER:-$(logname 2>/dev/null || echo 'root')}"
 
 read -p "DeepSeek API Key (输入后回车): " DEEPSEEK_KEY
@@ -175,7 +175,7 @@ mkdir -p "${CLAUDE_PROFILE_DIR}"
 cat > "${CLAUDE_PROFILE_DIR}/deepseek.json" << CLAUDE_EOF
 {
   "env": {
-    "ANTHROPIC_AUTH_TOKEN": "${DEEPSEEK_KEY}",
+    "ANTHROPIC_API_KEY": "${DEEPSEEK_KEY}",
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:${PROXY_PORT}",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "${DEFAULT_MODEL}",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "${DEFAULT_MODEL}",

@@ -609,3 +609,158 @@ async def health():
             "redis": get_redis_info(),
         },
     }
+
+# ── Compact（对话压缩）端点 ─────────────────────────────────────────
+
+async def responses_compact(request: Request):
+    """处理 OpenAI /v1/responses/compact 请求。
+
+    Codex CLI 在上下文接近窗口上限时调用此端点，要求压缩/摘要历史对话。
+    将 OpenAI compact 请求转为 DeepSeek 摘要请求，返回压缩后的 input。
+    """
+    import os
+    import time as _time
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    # 先 dump 请求到临时文件用于调试
+    dump_path = "/tmp/jindx_compact_request.json"
+    with open(dump_path, "w") as f:
+        json.dump(body, f, ensure_ascii=False, indent=2)
+    logger.info(f"Compact request dumped to {dump_path} ({len(json.dumps(body, ensure_ascii=False))} bytes)")
+
+    # 从请求中提取 input 和 instructions
+    inp = body.get("input", [])
+    instructions = body.get("instructions", body.get("system_message", ""))
+    model_name = map_model(body.get("model", DEFAULT_MODEL))
+
+    # 构建摘要请求：把历史对话发送给 DeepSeek 做压缩
+    summary_messages = []
+    if instructions:
+        summary_messages.append({"role": "system", "content": instructions})
+
+    # 将 input 列表转为消息格式用于摘要
+    conv_text = _format_conversation_for_compact(inp)
+    summary_messages.append({
+        "role": "user",
+        "content": (
+            "请对以下对话历史进行压缩摘要。保留所有关键信息、决策和代码变更，"
+            "但去除冗余的中间步骤和重复内容。用中文输出摘要：\n\n"
+            + conv_text
+        ),
+    })
+
+    chat_request = {
+        "model": model_name,
+        "messages": summary_messages,
+        "stream": False,
+    }
+    if (cfg_tokens := config.get("max_output_tokens")):
+        chat_request["max_tokens"] = cfg_tokens
+
+    client = await _get_http_client()
+    try:
+        resp = await client.post(_get_upstream(), json=chat_request, headers=_get_auth_headers())
+        if resp.status_code != 200:
+            logger.error(f"Compact summary failed: {resp.status_code} {resp.text[:500]}")
+            # 降级：返回原始 input 只保留最后几条
+            fallback = inp[-20:] if len(inp) > 20 else inp
+            return JSONResponse({
+                "output": _normalize_items(fallback),
+                "compacted_input": _normalize_items(fallback),
+            })
+        chat_data = resp.json()
+        summary_text = chat_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        # 帮助函数：将 content 转为 input_text 数组格式（OpenAI Responses API 要求）
+        def _to_content_parts(text):
+            return [{"type": "input_text", "text": text}]
+
+        def _normalize_items(items):
+            """将 content 为纯字符串的 item 转为数组格式。"""
+            result = []
+            for item in items:
+                item = dict(item)
+                cnt = item.get("content")
+                if isinstance(cnt, str):
+                    item["content"] = _to_content_parts(cnt)
+                result.append(item)
+            return result
+
+        # 构造压缩后的 input：instructions + 摘要 + 最近几轮原始消息保持上下文
+        compacted = []
+        # 保留 instructions
+        if instructions:
+            compacted.append({
+                "type": "message",
+                "role": "developer",
+                "content": _to_content_parts(instructions),
+            })
+        # 添加摘要作为上下文
+        compacted.append({
+            "type": "message",
+            "role": "developer",
+            "content": _to_content_parts(f"[对话历史摘要]\n{summary_text}"),
+        })
+        # 保留最后 6 条原始消息（约 3 轮对话）以保证近期上下文不丢失
+        keep_tail = min(6, len(inp))
+        if keep_tail > 0:
+            compacted.extend(_normalize_items(inp[-keep_tail:]))
+
+        logger.info(f"Compact done: {len(inp)} items -> {len(compacted)} items, summary {len(summary_text)} chars")
+        return JSONResponse({
+            "output": compacted, "compacted_input": compacted,
+        })
+    except (httpx.TimeoutException, httpx.ConnectError) as e:
+        logger.error(f"Compact upstream error: {e}")
+        fallback = inp[-20:] if len(inp) > 20 else inp
+        return JSONResponse({
+            "output": _normalize_items(fallback),
+            "compacted_input": _normalize_items(fallback),
+        })
+
+
+def _format_conversation_for_compact(inp: list) -> str:
+    """将 input 列表格式化为可读对话文本用于摘要。"""
+    lines = []
+    for item in inp:
+        if isinstance(item, dict):
+            role = item.get("role", "")
+            itype = item.get("type", "")
+            content = item.get("content", "")
+
+            if itype == "function_call":
+                name = item.get("name", "")
+                args = item.get("arguments", "")
+                args_short = args[:200] + "..." if len(args) > 200 else args
+                lines.append(f"[工具调用] {name}({args_short})")
+            elif itype == "function_call_output":
+                call_id = item.get("call_id", "")
+                output = item.get("output", "")
+                output_short = str(output)[:300] + "..." if len(str(output)) > 300 else str(output)
+                lines.append(f"[工具结果 {call_id}] {output_short}")
+            elif role or itype == "message":
+                role_label = {"user": "用户", "assistant": "助手", "developer": "系统", "system": "系统", "tool": "工具"}.get(role, role)
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if isinstance(part, dict):
+                            pt = part.get("type", "")
+                            if pt in ("output_text", "input_text", "text"):
+                                t = part.get("text", "")
+                                if len(t) > 500:
+                                    t = t[:500] + "..."
+                                text_parts.append(t)
+                            elif pt == "reasoning_text":
+                                t = part.get("text", "")
+                                if len(t) > 200:
+                                    t = t[:200] + "..."
+                                text_parts.append(f"[思考: {t}]")
+                    content = "\n".join(text_parts)
+                elif isinstance(content, str) and len(content) > 800:
+                    content = content[:800] + "..."
+                lines.append(f"[{role_label}] {content}")
+            # 跳过其他类型
+    return "\n\n".join(lines)
