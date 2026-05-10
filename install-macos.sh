@@ -2,6 +2,14 @@
 # JinDX macOS 安装脚本
 # 用法: bash install-macos.sh
 # 交互式: 会询问 DeepSeek API Key
+#
+# 功能:
+#   1. 安装 Python 依赖
+#   2. 配置 /etc/hosts 劫持（5 个 OpenAI 域名 → 127.0.0.1）
+#   3. 配置 pfctl 端口转发（127.0.0.1:443 → 127.0.0.1:8444）
+#   4. 创建 launchd 后台服务
+#   5. 生成 Claude Code profile
+#   6. 输出 Codex CLI 环境变量
 
 set -e
 
@@ -32,6 +40,9 @@ fi
 read -p "代理端口 [8080]: " PROXY_PORT
 PROXY_PORT="${PROXY_PORT:-8080}"
 
+read -p "TLS 端口 (用于端口转发 443→) [8444]: " TLS_PORT
+TLS_PORT="${TLS_PORT:-8444}"
+
 read -p "管理面板端口 [8090]: " ADMIN_PORT
 ADMIN_PORT="${ADMIN_PORT:-8090}"
 
@@ -42,6 +53,7 @@ echo ""
 echo "安装配置:"
 echo "  安装目录:   ${INSTALL_DIR}"
 echo "  代理端口:   ${PROXY_PORT}"
+echo "  TLS 端口:   ${TLS_PORT}"
 echo "  管理面板:   ${ADMIN_PORT}"
 echo "  默认模型:   ${DEFAULT_MODEL}"
 echo ""
@@ -97,17 +109,99 @@ HOSTS_ENTRIES=(
 for entry in "${HOSTS_ENTRIES[@]}"; do
     if ! grep -q "$entry" /etc/hosts 2>/dev/null; then
         echo "$entry" | sudo tee -a /etc/hosts > /dev/null
+        log "  hosts: ${entry}"
     fi
 done
+# 刷新 DNS 缓存
+sudo dscacheutil -flushcache 2>/dev/null || true
+sudo killall -HUP mDNSResponder 2>/dev/null || true
+
+# ── 配置 pfctl 端口转发 (443 → 8444) ──────────────────
+log "配置端口转发 127.0.0.1:443 → 127.0.0.1:${TLS_PORT}..."
+
+# macOS 用 pfctl 做本地端口转发（需要先启用 ip forwarding）
+# 注意：pf 规则在 /etc/pf.conf 中，我们添加 anchor 文件避免修改系统配置
+PF_ANCHOR="/etc/pf.anchors/jindx"
+PF_RULE="rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port ${TLS_PORT}"
+
+# 确保系统 pf.conf 加载了 anchor
+if ! grep -q "jindx" /etc/pf.conf 2>/dev/null; then
+    echo "anchor \"jindx/*\"" | sudo tee -a /etc/pf.conf > /dev/null
+    echo "load anchor \"jindx\" from \"${PF_ANCHOR}\"" | sudo tee -a /etc/pf.conf > /dev/null
+fi
+
+sudo mkdir -p /etc/pf.anchors
+echo "$PF_RULE" | sudo tee "$PF_ANCHOR" > /dev/null
+
+# 启用 pf（macOS 默认关闭）
+sudo pfctl -E 2>/dev/null || true
+sudo pfctl -f /etc/pf.conf 2>/dev/null || true
+log "  pfctl 端口转发已配置"
 
 # ── 创建 launchd 服务 ─────────────────────────────────
 log "创建 launchd 服务..."
 
 PLIST_PATH="$HOME/Library/LaunchAgents/com.jindx.proxy.plist"
-sed -e "s|/opt/jindx|${INSTALL_DIR}|g" \
-    -e "s|sk-your-deepseek-api-key|${DEEPSEEK_KEY}|g" \
-    -e "s|8080</key>.*<string>8090|<string>${PROXY_PORT}</string>.*<string>${ADMIN_PORT}|" \
-    "${SCRIPT_DIR}/com.jindx.proxy.plist" > /tmp/com.jindx.proxy.plist
+
+cat > /tmp/com.jindx.proxy.plist << PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jindx.proxy</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>${INSTALL_DIR}/proxy.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>${INSTALL_DIR}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DEEPSEEK_BASE</key>
+        <string>https://api.deepseek.com</string>
+        <key>DEEPSEEK_KEY</key>
+        <string>${DEEPSEEK_KEY}</string>
+        <key>DEFAULT_MODEL</key>
+        <string>${DEFAULT_MODEL}</string>
+        <key>PROXY_PORT</key>
+        <string>${PROXY_PORT}</string>
+        <key>ADMIN_PORT</key>
+        <string>${ADMIN_PORT}</string>
+        <key>TLS_PORT</key>
+        <string>${TLS_PORT}</string>
+        <key>REDIS_HOST</key>
+        <string>127.0.0.1</string>
+        <key>REDIS_PORT</key>
+        <string>6379</string>
+        <key>REDIS_DB</key>
+        <string>0</string>
+        <key>CONNECT_PORT</key>
+        <string>8443</string>
+        <key>DEFAULT_REASONING_EFFORT</key>
+        <string>max</string>
+        <key>MAX_POSITION_EMBEDDINGS</key>
+        <string>1000000</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>${INSTALL_DIR}/logs/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>${INSTALL_DIR}/logs/stderr.log</string>
+</dict>
+</plist>
+PLISTEOF
 
 mkdir -p "$HOME/Library/LaunchAgents"
 cp /tmp/com.jindx.proxy.plist "$PLIST_PATH"
@@ -126,7 +220,8 @@ cat > "${CLAUDE_PROFILE_DIR}/deepseek.json" << CLAUDE_EOF
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "${DEFAULT_MODEL}",
     "ANTHROPIC_MODEL": "${DEFAULT_MODEL}"
   },
-  "model": "sonnet"
+  "model": "sonnet",
+  "skipDangerousModePermissionPrompt": true
 }
 CLAUDE_EOF
 
@@ -153,11 +248,25 @@ echo "  服务管理:"
 echo "    launchctl list com.jindx.proxy    查看状态"
 echo "    launchctl stop  com.jindx.proxy    停止"
 echo "    launchctl start com.jindx.proxy    启动"
-echo "    launchctl unload $PLIST_PATH    卸载服务"
+echo "    launchctl unload ${PLIST_PATH}    卸载服务"
 echo ""
 echo "  代理地址:     http://127.0.0.1:${PROXY_PORT}"
 echo "  管理面板:     http://127.0.0.1:${ADMIN_PORT}"
 echo ""
 echo "  Claude Code 配置已写入:"
 echo "    ${CLAUDE_PROFILE_DIR}/deepseek.json"
+echo "  使用方式:"
+echo "    claude --profile deepseek"
+echo ""
+echo "  Codex CLI 配置（在终端执行）:"
+echo "    export OPENAI_BASE_URL=http://127.0.0.1:${PROXY_PORT}"
+echo "    export OPENAI_API_KEY=${DEEPSEEK_KEY}"
+echo "    codex"
+echo ""
+echo "  hosts 劫持的域名:"
+echo "    api.openai.com, chatgpt.com, auth.openai.com,"
+echo "    chat.openai.com, ab.chatgpt.com → 127.0.0.1"
+echo ""
+echo "  端口转发:"
+echo "    127.0.0.1:443 → 127.0.0.1:${TLS_PORT} (pfctl)"
 echo ""
