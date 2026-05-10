@@ -157,39 +157,39 @@ def anthropic_to_chat(request_body: dict) -> dict:
         converted = _anthropic_content_to_chat_message(role, msg.get("content", ""))
         messages.extend(converted)
 
-    # ── 注入推理缓存（cc-switch 风格）──
-    # 优先从本会话缓存恢复 reasoning，回退到全局最近缓存，
-    # 最后用 _ensure_assistant_reasoning 做双重保险
+    # ── 推理缓存注入 ──
+    # 仅在 thinking 启用时才注入 reasoning_content，否则保持消息原样以
+    # 最大化 DeepSeek prompt cache 命中率。
     session_id = _claude_session_key(messages)
-    cached = get_cached_reasoning("claude", session_id)
+    thinking_enabled = _cfg("deepseek_thinking_enabled", False)
 
-    # 第一层：本会话缓存注入
-    if cached:
-        idx = 0
-        for msg in messages:
-            if msg.get("role") == "assistant":
-                if idx < len(cached):
-                    msg["reasoning_content"] = cached[idx]
-                    idx += 1
-        if idx > 0:
-            logger.info(f"Claude injected {idx} cached reasoning entries (session {session_id})")
+    if thinking_enabled:
+        cached = get_cached_reasoning("claude", session_id)
 
-    # 第二层：全局最近缓存回退（仅对仍缺失的 assistant 消息）
-    if not cached:
-        cached_global = get_cached_reasoning("claude", "recent")
-        if cached_global:
+        # 第一层：本会话缓存注入
+        if cached:
+            idx = 0
             for msg in messages:
-                if msg.get("role") == "assistant" and not msg.get("reasoning_content"):
-                    msg["reasoning_content"] = cached_global[0]
-                    logger.info("Claude injected global recent reasoning")
-                    break
+                if msg.get("role") == "assistant":
+                    if idx < len(cached):
+                        msg["reasoning_content"] = cached[idx]
+                        idx += 1
+            if idx > 0:
+                logger.info(f"Claude injected {idx} cached reasoning entries (session {session_id})")
 
-    # 第三层：确保所有 assistant 消息都有 reasoning_content（双重保险）
-    # DeepSeek 思考模式要求：如果任一 assistant 消息有 reasoning_content，
-    # 则所有 assistant 消息都必须有该字段，否则返回 400 错误。
-    from .protocol import _ensure_assistant_reasoning
-    all_cached = cached if cached else get_cached_reasoning("claude", "recent")
-    _ensure_assistant_reasoning(messages, all_cached)
+        # 第二层：全局最近缓存回退
+        if not cached:
+            cached_global = get_cached_reasoning("claude", "recent")
+            if cached_global:
+                for msg in messages:
+                    if msg.get("role") == "assistant" and not msg.get("reasoning_content"):
+                        msg["reasoning_content"] = cached_global[0]
+                        break
+
+        # 第三层：填充缺失的 reasoning_content
+        from .protocol import _ensure_assistant_reasoning
+        all_cached = cached if cached else get_cached_reasoning("claude", "recent")
+        _ensure_assistant_reasoning(messages, all_cached)
 
     chat = {
         "model": _cfg("default_model", "deepseek-v4-pro"),
@@ -212,10 +212,9 @@ def anthropic_to_chat(request_body: dict) -> dict:
     elif (cfg_top_p := _cfg("top_p")) is not None:
         chat["top_p"] = cfg_top_p
 
-    # 默认关闭 thinking，避免 DeepSeek V4 Pro 自动思考模式引发
-    # "reasoning_content must be passed back to the API" 400 错误。
-    # 可配置 deepseek_thinking_enabled = true 来开启。
-    if not _cfg("deepseek_thinking_enabled", False):
+    # thinking 控制：默认关闭（避免 reasoning_content 400 错误），
+    # 开启后配合推理缓存实现跨轮思考连续性。
+    if not thinking_enabled:
         chat["thinking"] = {"type": "disabled"}
     tools = request_body.get("tools") or []
     if tools:

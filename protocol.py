@@ -68,12 +68,14 @@ def _fix_tool_message_ordering(messages: list) -> list:
 
 
 def _ensure_assistant_reasoning(messages: list, cached_reasoning: list[str]) -> None:
-    """确保所有 assistant 消息包含 reasoning_content 字段。
+    """当 thinking 启用时，确保所有 assistant 消息包含 reasoning_content 字段。
 
-    DeepSeek 的思考模式要求所有 assistant 消息都有 reasoning_content。
-    Codex function_call 项创建的 assistant 消息（由 _extract_message_items 生成）
-    最初缺少该字段。我们从缓存填充，回退则为空字符串。
+    仅在存在缓存数据时才填充 reasoning_content。无缓存数据时跳过填充，
+    避免给消息增加 reasoning_content="" 空字段破坏 DeepSeek prompt cache。
     """
+    if not cached_reasoning:
+        return
+
     cache_idx = 0
     cache_used = set()
 
@@ -96,9 +98,6 @@ def _ensure_assistant_reasoning(messages: list, cached_reasoning: list[str]) -> 
                         cache_used.add(cache_idx)
                         break
                     cache_idx += 1
-            # 回退：空字符串
-            if not msg.get("reasoning_content"):
-                msg["reasoning_content"] = ""
         elif msg.get("role") not in ("tool",):
             turn_start = i + 1
 
@@ -278,63 +277,33 @@ def responses_to_chat(data: dict) -> dict:
 
     session_id = get_session_id(data)
     cached_reasoning = get_cached_reasoning("codex", session_id)
-
     if cached_reasoning:
         reasoning_idx = 0
-        pending_text_assistant = None
-        saw_assistant = False
         for msg in messages:
             if msg.get("role") == "assistant":
-                saw_assistant = True
                 if reasoning_idx < len(cached_reasoning):
-                    rc = cached_reasoning[reasoning_idx]
-                    msg["reasoning_content"] = rc
-                    if pending_text_assistant is not None:
-                        pending_text_assistant["reasoning_content"] = rc
-                if msg.get("tool_calls"):
-                    pending_text_assistant = None
-                else:
-                    pending_text_assistant = msg
-            elif msg.get("role") not in ("tool",):
-                if saw_assistant:
-                    reasoning_idx += 1
-                    saw_assistant = False
-                pending_text_assistant = None
-        if reasoning_idx > 0 or any(m.get("reasoning_content") for m in messages if m.get("role") == "assistant"):
-            logger.info(f"Attached reasoning_content to assistant messages (used {reasoning_idx + 1} cached entries)")
-        else:
-            reasoning_block = "\n\n---\n\n".join(
-                f"[Previous thinking #{i+1}]\n{r}"
-                for i, r in enumerate(cached_reasoning)
-            )
-            context_msg = (
-                "The following is your internal reasoning from previous turns in this conversation. "
-                "Use this to maintain continuity — do NOT repeat this reasoning, just let it inform your next response:\n\n"
-                f"{reasoning_block}"
-            )
-            if messages and messages[0].get("role") == "system":
-                messages[0]["content"] = messages[0]["content"] + "\n\n" + context_msg
-            else:
-                messages.insert(0, {"role": "system", "content": context_msg})
-            logger.info(f"Injected {len(cached_reasoning)} cached reasoning entries as system context for session {session_id}")
+                    msg["reasoning_content"] = cached_reasoning[reasoning_idx]
+                reasoning_idx += 1
+        logger.info(f"Attached reasoning_content to assistant messages (used {min(reasoning_idx, len(cached_reasoning))} entries)")
 
     _ensure_assistant_reasoning(messages, cached_reasoning)
 
-    # 当存在 tools 时注入 tool-use 强制执行提示
+    # tool-use 提示仅首轮注入（避免每轮修改 system 消息破坏 prompt cache）
     tools = data.get("tools")
-    if tools and config.get("tool_use_enforcement", True):
+    has_history = any(m.get("role") == "assistant" for m in messages)
+    if tools and not has_history and config.get("tool_use_enforcement", True):
         prompt = config.get("tool_use_prompt", "")
         if prompt and messages and messages[0].get("role") == "system":
             if prompt not in messages[0]["content"]:
                 messages[0]["content"] = prompt + "\n\n" + messages[0]["content"]
         elif prompt:
             messages.insert(0, {"role": "system", "content": prompt})
-        logger.info("Injected tool-use enforcement prompt")
+        logger.info("Injected tool-use enforcement prompt (first turn)")
 
     tools = data.get("tools") or []
-    if has_urls_in_messages(messages):
+    if not has_history and has_urls_in_messages(messages):
         prefetch_urls_into_messages(messages)
-        logger.info("Pre-fetched URLs into message context")
+        logger.info("Pre-fetched URLs into message context (first turn)")
 
     chat = {
         "model": map_model(data.get("model", DEFAULT_MODEL)),
