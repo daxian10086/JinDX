@@ -92,25 +92,6 @@ def _anthropic_content_to_chat_messages(role: str, content) -> list:
 
 def _anthropic_tools_to_chat(tools: list) -> list:
     result = []
-    for tool in tools:
-        schema = tool.get("input_schema", {})
-        params = {"type": schema.get("type", "object")}
-        for key in ("properties", "required", "additionalProperties", "enum",
-                     "oneOf", "anyOf", "allOf", "items", "minItems", "maxItems",
-                     "minProperties", "maxProperties", "uniqueItems"):
-            if key in schema:
-                params[key] = schema[key]
-        result.append({
-            "type": "function",
-            "function": {"name": tool.get("name", ""),
-                         "description": tool.get("description", ""),
-                         "parameters": params},
-        })
-    return result
-
-
-# ── 全局推理缓存桥接 ───────────────────────────────────────
-# Claude Code 没有 Codex 的 session ID 机制，用前 3 条消息的哈希做会话标识
 _CLAUDE_SESSION_CACHE: dict[int, str] = {}  # 基于消息哈希的 session 映射
 
 
@@ -162,6 +143,10 @@ def anthropic_to_chat(request_body: dict) -> dict:
                     break
 
     _CLAUDE_SESSION_CACHE[id(messages)] = session_id
+    # 限制缓存条目数防止内存泄漏
+    if len(_CLAUDE_SESSION_CACHE) > 1000:
+        while len(_CLAUDE_SESSION_CACHE) > 200:
+            _CLAUDE_SESSION_CACHE.pop(next(iter(_CLAUDE_SESSION_CACHE)), None)
 
     chat = {
         "model": _cfg("default_model", "deepseek-v4-pro"),

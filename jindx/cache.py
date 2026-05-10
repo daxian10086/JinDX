@@ -208,13 +208,14 @@ def get_cached_reasoning(session_id: str) -> list[str]:
     if _redis_available:
         try:
             result = _cache_redis_get(session_id, cache_ttl)
-            record_cache(bool(result))
             if result:
+                record_cache(True)
                 return result
+            # Redis miss，不记录，统一由下面记录
         except Exception:
             pass  # 降级到内存
 
-    # 内存兜底
+    # 内存兜底（同时负责记录缓存命中/未命中）
     result = _cache_memory_get(session_id, cache_ttl)
     record_cache(bool(result))
     return result
