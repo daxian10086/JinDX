@@ -90,6 +90,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "${SCRIPT_DIR}/proxy.py" ]; then
     log "从 ${SCRIPT_DIR} 复制文件..."
     cp "${SCRIPT_DIR}/proxy.py" "${INSTALL_DIR}/"
+    cp -r "${SCRIPT_DIR}/jindx" "${INSTALL_DIR}/"
 else
     warn "未找到 proxy.py，请手动复制到 ${INSTALL_DIR}/"
 fi

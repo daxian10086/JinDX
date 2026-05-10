@@ -7,6 +7,7 @@ import logging
 import ssl
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import WebSocketDisconnect
 
@@ -14,74 +15,223 @@ from .config import config, CERT_DIR, CERT_FILE, KEY_FILE, PROXY_PORT, CONNECT_P
 
 logger = logging.getLogger(__name__)
 
+# 证书 SAN 域名列表（Codex/Claude Code 会访问的域名）
+_SAN_DOMAINS = [
+    "localhost",
+    "api.openai.com",
+    "auth.openai.com",
+    "chat.openai.com",
+    "chatgpt.com",
+    "ab.chatgpt.com",
+    "api.deepseek.com",
+]
 
 # ── TLS 证书管理 ──────────────────────────────────────────────────
 
 def _generate_cert_cryptography():
-    """使用 cryptography 库生成自签名证书（跨平台，无需 openssl）。"""
+    """使用 cryptography 库生成 CA + Server 证书链（跨平台，无需 openssl）。
+
+    生成结构：
+      - CA 自签名根证书（JinDX-CA），输出到 ~/certs/tls.crt
+      - Server 证书由 CA 签发，SAN 包含所有代理域名
+      - 私钥：~/certs/tls.key（Server 私钥）
+
+    兼容性：
+      - Key Usage / Extended Key Usage 完整 → Node.js / 浏览器通过
+      - SAN 包含 7 个域名 → Rust TLS 不读系统 CA，但 Codex 自动 fallback HTTP
+      - 有效期 5 年（自签名本地代理，合理折中）
+    """
     from cryptography import x509
     from cryptography.x509.oid import NameOID
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
 
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
-
     now = datetime.now(timezone.utc)
-    cert = (
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    ca_name = x509.Name([
+        x509.NameAttribute(NameOID.COMMON_NAME, "JinDX-CA"),
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "JinDX Proxy"),
+    ])
+    server_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+
+    # ── CA 证书 ──
+    ca_cert = (
         x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now)
-        .not_valid_after(now + timedelta(days=3650))
+        .not_valid_after(now + timedelta(days=1825))  # 5 年
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
         .add_extension(
-            x509.SubjectAlternativeName([
-                x509.DNSName("localhost"),
-                x509.DNSName("api.openai.com"),
-            ]),
+            x509.KeyUsage(
+                key_cert_sign=True,
+                crl_sign=True,
+                digital_signature=False,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
             critical=False,
         )
-        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=False)
-        .sign(key, hashes.SHA256())
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    # ── Server 证书（CA 签发）──
+    server_cert = (
+        x509.CertificateBuilder()
+        .subject_name(server_name)
+        .issuer_name(ca_name)
+        .public_key(server_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=1825))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_encipherment=True,
+                key_cert_sign=False,
+                crl_sign=False,
+                content_commitment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([x509.oid.ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(d) for d in _SAN_DOMAINS]),
+            critical=False,
+        )
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(server_key.public_key()),
+            critical=False,
+        )
+        .sign(ca_key, hashes.SHA256())
     )
 
     CERT_DIR.mkdir(parents=True, exist_ok=True)
-    KEY_FILE.write_bytes(key.private_bytes(
+
+    # CA 证书 → tls.crt（uvicorn SSL 的 ssl_certfile）
+    ca_pem = ca_cert.public_bytes(serialization.Encoding.PEM)
+    server_pem = server_cert.public_bytes(serialization.Encoding.PEM)
+    CERT_FILE.write_bytes(server_pem + ca_pem)
+
+    # Server 私钥 → tls.key
+    KEY_FILE.write_bytes(server_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.TraditionalOpenSSL,
         encryption_algorithm=serialization.NoEncryption(),
     ))
-    CERT_FILE.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+
+    # 单独保存 CA 证书，方便用户导入系统信任
+    ca_only = CERT_DIR / "ca.pem"
+    ca_only.write_bytes(ca_pem)
+    logger.info(f"CA cert saved to {ca_only} (import this to trust the proxy)")
+
+    # 保存 CA 私钥用于签发未来的证书
+    ca_key_file = CERT_DIR / "ca.key"
+    ca_key_file.write_bytes(ca_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    ))
+    ca_key_file.chmod(0o600)
 
 
 def _generate_cert_openssl():
-    """使用 openssl CLI 生成自签名证书（回退选项）。"""
+    """使用 openssl CLI 生成 CA + Server 证书链（回退选项）。"""
     from subprocess import run
+
     CERT_DIR.mkdir(parents=True, exist_ok=True)
+    ca_key_path = CERT_DIR / "ca.key"
+    ca_cert_path = CERT_DIR / "ca.pem"
+
+    # 1. 生成 CA 私钥和自签名根证书
     run([
         "openssl", "req", "-x509", "-newkey", "rsa:2048",
-        "-keyout", str(KEY_FILE), "-out", str(CERT_FILE),
-        "-days", "3650", "-nodes",
-        "-subj", "/CN=localhost",
-        "-addext", "subjectAltName=DNS:localhost,DNS:api.openai.com",
-        "-addext", "basicConstraints=CA:FALSE",
-        "-addext", "keyUsage=digitalSignature,keyEncipherment",
-        "-addext", "extendedKeyUsage=serverAuth",
+        "-keyout", str(ca_key_path), "-out", str(ca_cert_path),
+        "-days", "1825", "-nodes",
+        "-subj", "/CN=JinDX-CA/O=JinDX Proxy",
+        "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
+        "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+        "-addext", "subjectKeyIdentifier=hash",
     ], check=True, capture_output=True)
+
+    ca_key_path.chmod(0o600)
+
+    # 2. 生成 Server 私钥
+    run([
+        "openssl", "genrsa", "-out", str(KEY_FILE), "2048",
+    ], check=True, capture_output=True)
+
+    # 3. 生成 CSR
+    csr_path = CERT_DIR / "server.csr"
+    run([
+        "openssl", "req", "-new",
+        "-key", str(KEY_FILE), "-out", str(csr_path),
+        "-subj", "/CN=localhost",
+    ], check=True, capture_output=True)
+
+    # 4. 用 CA 签发 Server 证书
+    san_ext = f"subjectAltName={','.join(f'DNS:{d}' for d in _SAN_DOMAINS)}"
+    run([
+        "openssl", "x509", "-req",
+        "-in", str(csr_path),
+        "-CA", str(ca_cert_path), "-CAkey", str(ca_key_path),
+        "-CAcreateserial",
+        "-out", str(CERT_FILE), "-days", "1825",
+        "-extfile", "/dev/stdin",
+    ], input=f"""
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+{san_ext}
+authorityKeyIdentifier=keyid,issuer
+subjectKeyIdentifier=hash
+""".encode(), check=True, capture_output=True)
+
+    # 追加 CA 证书到 tls.crt 形成完整链
+    ca_pem = ca_cert_path.read_bytes()
+    with open(CERT_FILE, "ab") as f:
+        f.write(ca_pem)
+
+    logger.info(f"CA cert saved to {ca_cert_path}")
 
 
 def ensure_certs():
-    """生成自签名证书用于 TLS 终止。优先使用 cryptography 库，回退到 openssl CLI。"""
+    """生成 CA + Server 证书链用于 TLS 终止。
+
+    优先使用 cryptography 库（跨平台），回退到 openssl CLI。
+    证书文件已存在时跳过生成。
+    """
     if CERT_FILE.exists() and KEY_FILE.exists():
         return
 
     # 优先尝试 cryptography（跨平台）
     try:
         _generate_cert_cryptography()
-        logger.info(f"Generated self-signed TLS cert (cryptography): {CERT_FILE}")
+        logger.info(f"Generated TLS cert chain (cryptography): {CERT_FILE}")
         return
     except ImportError:
         logger.debug("cryptography not available, falling back to openssl")
@@ -91,7 +241,7 @@ def ensure_certs():
     # 回退到 openssl CLI
     try:
         _generate_cert_openssl()
-        logger.info(f"Generated self-signed TLS cert (openssl): {CERT_FILE}")
+        logger.info(f"Generated TLS cert chain (openssl): {CERT_FILE}")
     except FileNotFoundError:
         logger.warning(
             "openssl not found. Install openssl or 'pip install cryptography' to enable TLS. "

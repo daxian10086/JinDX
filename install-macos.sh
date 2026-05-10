@@ -90,6 +90,9 @@ log "配置 /etc/hosts 劫持..."
 HOSTS_ENTRIES=(
     "127.0.0.1 api.openai.com"
     "127.0.0.1 chatgpt.com"
+    "127.0.0.1 auth.openai.com"
+    "127.0.0.1 chat.openai.com"
+    "127.0.0.1 ab.chatgpt.com"
 )
 for entry in "${HOSTS_ENTRIES[@]}"; do
     if ! grep -q "$entry" /etc/hosts 2>/dev/null; then
