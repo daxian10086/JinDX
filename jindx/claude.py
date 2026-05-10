@@ -36,11 +36,6 @@ def _cfg(key, default=None):
 # 请求转换：Anthropic Messages → DeepSeek Chat Completions
 # ═══════════════════════════════════════════════════════════════════
 
-def _anthropic_text_to_chat_content(text: str) -> str:
-    """Anthropic 的 text content 直接转为字符串。"""
-    return text
-
-
 def _anthropic_content_to_chat_message(role: str, content) -> dict:
     """将 Anthropic 消息的 content（字符串或数组）转为 DeepSeek 消息格式。"""
     if isinstance(content, str):
@@ -99,6 +94,12 @@ def _anthropic_tools_to_chat(tools: list) -> list:
                 params["properties"] = schema["properties"]
             if "required" in schema:
                 params["required"] = schema["required"]
+            # 转递其他 JSON Schema 字段
+            for key in ("additionalProperties", "patternProperties", "minProperties",
+                        "maxProperties", "enum", "oneOf", "anyOf", "allOf",
+                        "items", "minItems", "maxItems", "uniqueItems"):
+                if key in schema:
+                    params[key] = schema[key]
         result.append({
             "type": "function",
             "function": {
@@ -157,8 +158,7 @@ def anthropic_to_chat(request_body: dict) -> dict:
     elif (cfg_top_p := _cfg("top_p")) is not None:
         chat["top_p"] = cfg_top_p
 
-    if (effort := _cfg("reasoning_effort")):
-        chat["reasoning_effort"] = effort
+    # Claude Code 不启用 DeepSeek thinking mode（避免 reasoning_content 回传问题）
 
     tools = request_body.get("tools") or []
     if tools:
@@ -184,11 +184,19 @@ def _ds_finish_to_claude(ds_finish: str) -> str:
     return _FINISH_MAP.get(ds_finish or "", "end_turn")
 
 
+def _ensure_tool_use_id(tc_id: str) -> str:
+    """确保 tool_use id 以 toolu_ 开头（Anthropic 规范）。"""
+    if tc_id and tc_id.startswith("toolu_"):
+        return tc_id
+    return _make_claude_id("toolu")
+
+
 def chat_to_anthropic(chat_response: dict, upstream_model: str) -> dict:
     """将 DeepSeek Chat Completions 响应转为 Anthropic Messages 格式（非流式）。"""
     choices = chat_response.get("choices", [])
     msg_id = _make_claude_id()
     content_blocks = []
+    has_tool_calls = False
 
     if choices:
         choice = choices[0]
@@ -202,9 +210,6 @@ def chat_to_anthropic(chat_response: dict, upstream_model: str) -> dict:
         strip = _cfg("strip_thinking", True)
         if reasoning and not strip:
             content_blocks.append({"type": "text", "text": reasoning})
-        elif reasoning:
-            # 跳过 — reasoning_content 不回显
-            pass
 
         if ds_content:
             content_blocks.append({"type": "text", "text": ds_content})
@@ -212,6 +217,7 @@ def chat_to_anthropic(chat_response: dict, upstream_model: str) -> dict:
         # 转换 tool_calls
         tool_calls = message.get("tool_calls") or []
         for tc in tool_calls:
+            has_tool_calls = True
             func = tc.get("function", {})
             try:
                 inp = json.loads(func.get("arguments", "{}"))
@@ -219,12 +225,16 @@ def chat_to_anthropic(chat_response: dict, upstream_model: str) -> dict:
                 inp = {"_raw": func.get("arguments", "")}
             content_blocks.append({
                 "type": "tool_use",
-                "id": tc.get("id", _make_claude_id("toolu")),
+                "id": _ensure_tool_use_id(tc.get("id", "")),
                 "name": func.get("name", ""),
                 "input": inp,
             })
     else:
         finish = "stop"
+
+    # 无内容时给个空文本块（Anthropic 要求）
+    if not content_blocks:
+        content_blocks = [{"type": "text", "text": ""}]
 
     usage = chat_response.get("usage", {})
     return {
@@ -232,8 +242,8 @@ def chat_to_anthropic(chat_response: dict, upstream_model: str) -> dict:
         "type": "message",
         "role": "assistant",
         "model": upstream_model,
-        "content": content_blocks if content_blocks else [{"type": "text", "text": ""}],
-        "stop_reason": _ds_finish_to_claude(finish),
+        "content": content_blocks,
+        "stop_reason": "tool_use" if has_tool_calls else _ds_finish_to_claude(finish),
         "stop_sequence": None,
         "usage": {
             "input_tokens": usage.get("prompt_tokens", 0),
@@ -248,15 +258,17 @@ def chat_to_anthropic(chat_response: dict, upstream_model: str) -> dict:
 
 async def _stream_anthropic_from_chat(chat_request: dict, upstream_url: str, auth_headers: dict, client: httpx.AsyncClient):
     """将 DeepSeek SSE 流转为 Anthropic SSE 流。"""
-    import asyncio
-
     msg_id = _make_claude_id()
     upstream_model = chat_request.get("model", "deepseek-v4-pro")
     started = False
-    content_index = 0
     total_usage = {}
     finish_reason = "end_turn"
     strip = _cfg("strip_thinking", True)
+    pending_tool_calls: dict[int, dict] = {}
+    text_block_active = True  # 第一个 content_block(0) 始终是 text 类型
+
+    def _emit(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
     try:
         async with client.stream("POST", upstream_url, json=chat_request, headers=auth_headers) as upstream:
@@ -265,15 +277,11 @@ async def _stream_anthropic_from_chat(chat_request: dict, upstream_url: str, aut
                 body_str = body_text.decode()[:2000]
                 record_error(upstream.status_code, body_str)
                 log_error(f"Claude stream {upstream.status_code}: {body_str}")
-                err = json.dumps({
+                yield _emit("error", {
                     "type": "error",
                     "error": {"type": "api_error", "message": body_str},
                 })
-                yield f"event: error\ndata: {err}\n\n"
                 return
-
-            pending_text = ""
-            pending_tool_calls: dict[int, dict] = {}
 
             async for line in upstream.aiter_lines():
                 if not line.startswith("data: "):
@@ -303,37 +311,43 @@ async def _stream_anthropic_from_chat(chat_request: dict, upstream_url: str, aut
 
                 if not started:
                     started = True
-                    yield (
-                        f"event: message_start\n"
-                        f"data: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'model': upstream_model, 'content': [], 'usage': {'input_tokens': 0}}})}\n\n"
-                    )
-                    yield (
-                        f"event: content_block_start\n"
-                        f"data: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
-                    )
+                    yield _emit("message_start", {
+                        "type": "message_start",
+                        "message": {
+                            "id": msg_id, "type": "message", "role": "assistant",
+                            "model": upstream_model, "content": [],
+                            "usage": {"input_tokens": 0},
+                        },
+                    })
+                    yield _emit("content_block_start", {
+                        "type": "content_block_start",
+                        "index": 0,
+                        "content_block": {"type": "text", "text": ""},
+                    })
 
-                # DeepSeek 先发 reasoning_content 再发 content
                 if reasoning_delta:
                     if not strip:
-                        pending_text += reasoning_delta
-                        yield (
-                            f"event: content_block_delta\n"
-                            f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': reasoning_delta}})}\n\n"
-                        )
+                        yield _emit("content_block_delta", {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": reasoning_delta},
+                        })
 
                 if content_delta:
-                    pending_text += content_delta
-                    yield (
-                        f"event: content_block_delta\n"
-                        f"data: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': content_delta}})}\n\n"
-                    )
+                    yield _emit("content_block_delta", {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": content_delta},
+                    })
 
-                # 累积 tool call deltas
+                # 累积 tool call deltas，同时在流中发出 input_json_delta
                 tc_deltas = d.get("tool_calls") or []
                 for tc in tc_deltas:
                     idx = tc.get("index", 0)
                     if idx not in pending_tool_calls:
                         pending_tool_calls[idx] = {"id": tc.get("id", ""), "name": "", "arguments": ""}
+                        # 关闭文本块，开始 tool_use 块
+                        # 注意：DeepSeek 可能同时发 content 和 tool_calls
                     cur = pending_tool_calls[idx]
                     if tc.get("id"):
                         cur["id"] = tc["id"]
@@ -343,26 +357,70 @@ async def _stream_anthropic_from_chat(chat_request: dict, upstream_url: str, aut
                     if func.get("arguments"):
                         cur["arguments"] += func["arguments"]
 
-            # 发送 content_block_stop
-            yield (
-                f"event: content_block_stop\n"
-                f"data: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-            )
+            # ── 关闭 text content_block(0) ─────────────────
+            yield _emit("content_block_stop", {
+                "type": "content_block_stop", "index": 0,
+            })
 
-            # 发送 message_delta
-            stop_reason = _ds_finish_to_claude(finish_reason)
-            yield (
-                f"event: message_delta\n"
-                f"data: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': {'output_tokens': total_usage.get('completion_tokens', 0)}})}\n\n"
-            )
+            # ── 发送 tool_use content_blocks ────────────
+            has_tool_calls = len(pending_tool_calls) > 0
+            block_idx = 1
+            for tc_idx in sorted(pending_tool_calls.keys()):
+                tc = pending_tool_calls[tc_idx]
+                tc_id = _ensure_tool_use_id(tc.get("id", ""))
+                tc_name = tc.get("name", "")
+                tc_args = tc.get("arguments", "{}")
 
-            # 发送 message_stop
-            yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
+                try:
+                    tc_input = json.loads(tc_args)
+                except json.JSONDecodeError:
+                    tc_input = {}
+
+                yield _emit("content_block_start", {
+                    "type": "content_block_start",
+                    "index": block_idx,
+                    "content_block": {
+                        "type": "tool_use",
+                        "id": tc_id,
+                        "name": tc_name,
+                        "input": {},
+                    },
+                })
+
+                # 发送 input_json_delta（完整参数 JSON）
+                if tc_args:
+                    yield _emit("content_block_delta", {
+                        "type": "content_block_delta",
+                        "index": block_idx,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": tc_args,
+                        },
+                    })
+
+                yield _emit("content_block_stop", {
+                    "type": "content_block_stop", "index": block_idx,
+                })
+                block_idx += 1
+
+            # ── message_delta ──────────────────────────
+            stop_reason = "tool_use" if has_tool_calls else _ds_finish_to_claude(finish_reason)
+            yield _emit("message_delta", {
+                "type": "message_delta",
+                "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+                "usage": {"output_tokens": total_usage.get("completion_tokens", 0)},
+            })
+
+            # ── message_stop ───────────────────────────
+            yield _emit("message_stop", {"type": "message_stop"})
+
 
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         record_error(500)
-        err = json.dumps({"type": "error", "error": {"type": "api_error", "message": str(e)}})
-        yield f"event: error\ndata: {err}\n\n"
+        yield _emit("error", {
+            "type": "error",
+            "error": {"type": "api_error", "message": str(e)},
+        })
 
 
 # ═══════════════════════════════════════════════════════════════════
