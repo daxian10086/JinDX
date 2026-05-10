@@ -65,6 +65,13 @@ $env:PROXY_PORT="9000"
 .\start.ps1
 ```
 
+**CMD 启动**（无需管理员，但无 hosts 劫持功能）：
+
+```cmd
+set DEEPSEEK_KEY=sk-xxx
+start.bat
+```
+
 配置文件：`%APPDATA%\proxy-config.json`。
 
 ### 开发环境（所有平台通用）
