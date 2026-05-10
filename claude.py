@@ -147,6 +147,15 @@ def anthropic_to_chat(request_body: dict) -> dict:
 
     _CLAUDE_SESSION_CACHE[id(messages)] = session_id
 
+    # 确保所有 assistant 消息都有 reasoning_content
+    # DeepSeek 思考模式要求：如果任一 assistant 消息有 reasoning_content，
+    # 则所有 assistant 消息都必须有该字段，否则返回 400 错误。
+    from .protocol import _ensure_assistant_reasoning
+    all_cached = get_cached_reasoning(session_id)
+    if not all_cached:
+        all_cached = get_cached_reasoning("claude_recent")
+    _ensure_assistant_reasoning(messages, all_cached)
+
     chat = {
         "model": _cfg("default_model", "deepseek-v4-pro"),
         "messages": messages,
