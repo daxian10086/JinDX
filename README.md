@@ -9,7 +9,7 @@
 ```bash
 git clone https://github.com/daxian10086/JinDX.git
 cd JinDX
-sudo ./deploy.sh
+sudo bash platform/deploy.sh
 ```
 
 交互式输入 DeepSeek API Key，自动完成 systemd 服务部署、hosts 劫持、iptables 规则。默认源不可用时自动切到阿里云/清华镜像。
@@ -23,11 +23,11 @@ git clone https://github.com/daxian10086/JinDX.git
 cd JinDX
 
 # 方式一：一键安装（含 launchd 后台服务、hosts 劫持、pfctl 端口转发）
-bash install-macos.sh
+bash platform/install-macos.sh
 
 # 方式二：手动启动（开发/测试）
 pip3 install fastapi "uvicorn[standard]" httpx redis cryptography
-./start.sh
+bash platform/start.sh
 ```
 
 install-macos.sh 会：安装 Python 依赖 → 创建 launchd 服务 → 配置 /etc/hosts 劫持 → 配置 pfctl 端口转发(443→8444) → 配置 Claude Code profile → 输出 Codex CLI 环境变量。配置文件存入 `~/Library/Application Support/proxy-config.json`。默认源不可用时自动切到清华镜像。
@@ -52,7 +52,7 @@ git clone https://github.com/daxian10086/JinDX.git
 cd JinDX
 
 # 右键 PowerShell → 以管理员身份运行
-.\start.ps1
+.\platform\start.ps1
 ```
 
 start.ps1 以管理员运行时自动配置 hosts 劫持（5 个域名 → 127.0.0.1）和 netsh 端口转发（127.0.0.1:443 → 8444），启动后输出 Codex CLI / Claude Code 环境变量。非管理员也可运行（缺少劫持功能）。
@@ -62,7 +62,7 @@ start.ps1 以管理员运行时自动配置 hosts 劫持（5 个域名 → 127.0
 ```powershell
 $env:DEEPSEEK_KEY="sk-xxx"
 $env:PROXY_PORT="9000"
-.\start.ps1
+.\platform\start.ps1
 ```
 
 配置文件：`%APPDATA%\proxy-config.json`。
@@ -71,8 +71,8 @@ $env:PROXY_PORT="9000"
 
 ```bash
 pip install fastapi "uvicorn[standard]" httpx redis cryptography
-./start.sh          # Linux/macOS
-start.bat           # Windows
+bash platform/start.sh          # Linux/macOS
+platform\start.bat           # Windows
 ```
 
 部署完成后访问 `http://127.0.0.1:8090` 进入管理面板，所有参数即时调整即时生效。
@@ -104,7 +104,7 @@ claude
 | 端口转发 (443→8444) | iptables DNAT | pfctl rdr | netsh portproxy |
 | TLS 证书 | cryptography / openssl | cryptography | cryptography |
 | 安装脚本 | deploy.sh | install-macos.sh | start.ps1（管理员） |
-| 开发启动 | start.sh | start.sh | start.bat / start.ps1 |
+| 开发启动 | start.sh | start.sh | platform\start.bat / start.ps1 |
 | 配置文件 | `~/.config/proxy-config.json` | `~/Library/Application Support/` | `%APPDATA%\` |
 | 镜像回退 | apt→阿里云, pip→清华 | pip→清华, brew提示 | pip→清华 |
 
@@ -241,17 +241,18 @@ JinDX/
 │   ├── codex.py                     # Codex RPC 模拟 + 模型目录
 │   ├── claude.py                    # Anthropic Messages ↔ DeepSeek 协议翻译
 │   ├── admin.py                     # Web 管理 API + 内嵌 HTML UI
-│   ├── tunnel.py                    # TLS CA+Server 证书链生成 + CONNECT 隧道
-│   └── repair.py                    # 服务自动诊断修复
-├── start.sh                         # Linux/macOS 开发启动
-├── start.bat                        # Windows CMD 启动
-├── start.ps1                        # Windows PowerShell 启动（管理员可配 hosts+端口转发）
-├── deploy.sh                        # Linux 一键部署（systemd + iptables）
-├── install-macos.sh                 # macOS 安装脚本（launchd + pfctl）
-├── repair.sh                        # Shell 诊断修复脚本
-├── com.jindx.proxy.plist            # macOS launchd 服务定义
-├── chat-responses-proxy.service     # Linux systemd 服务模板
-├── git-push.sh                      # 通过 GitHub API 推送（绕过网络限制）
+│   └── tunnel.py                    # TLS CA+Server 证书链生成 + CONNECT 隧道
+├── platform/                        # 平台安装和启动脚本
+│   ├── deploy.sh                    # Linux 一键部署（systemd + iptables）
+│   ├── install-macos.sh             # macOS 安装脚本（launchd + pfctl）
+│   ├── start.sh                     # Linux/macOS 开发启动
+│   ├── platform\start.bat                    # Windows CMD 启动
+│   ├── start.ps1                    # Windows PowerShell 启动
+│   ├── com.jindx.proxy.plist        # macOS launchd 服务定义
+│   └── chat-responses-proxy.service # Linux systemd 服务模板
+├── scripts/                         # 工具脚本
+│   ├── repair.sh                    # Shell 诊断修复脚本
+│   └── repair.py                    # Python 诊断修复模块
 ├── requirements.txt                 # Python 依赖
 └── README.md
 ```
@@ -305,8 +306,7 @@ curl -X POST http://127.0.0.1:8090/config \
   -H "Content-Type: application/json" \
   -d '{"temperature": 0.7, "reasoning_effort": "high"}'
 
-# 推送代码（网络受限时通过 API）
-./git-push.sh
+# 推送代码（网络受限时参考 git-push-github-ssh skill）
 ```
 
 ### Linux (systemd)
@@ -327,4 +327,4 @@ launchctl start com.jindx.proxy             # 启动
 
 ### Windows
 
-以管理员身份运行 PowerShell：`.\start.ps1`
+以管理员身份运行 PowerShell：`.\platform\start.ps1`

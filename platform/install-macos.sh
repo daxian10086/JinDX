@@ -93,7 +93,7 @@ log "创建安装目录..."
 sudo mkdir -p "${INSTALL_DIR}/certs" "${INSTALL_DIR}/logs"
 
 # ── 复制文件 ─────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 log "从 ${SCRIPT_DIR} 复制文件..."
 sudo cp -r "${SCRIPT_DIR}/proxy.py" "${SCRIPT_DIR}/jindx" "${SCRIPT_DIR}/requirements.txt" "${INSTALL_DIR}/"
 
