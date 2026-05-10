@@ -37,12 +37,17 @@ def _cfg(key, default=None):
 # 请求转换：Anthropic Messages → DeepSeek Chat Completions
 # ═══════════════════════════════════════════════════════════
 
-def _anthropic_content_to_chat_message(role: str, content) -> dict:
+def _anthropic_content_to_chat_messages(role: str, content) -> list:
+    """将 Anthropic 消息的 content 转为 DeepSeek 消息列表。
+    当 user 消息含多个 tool_result 时返回多个独立的 tool 消息。
+    """
     if isinstance(content, str):
-        return {"role": role, "content": content}
-    result = {"role": role, "content": ""}
+        return [{"role": role, "content": content}]
+
+    results = []
     text_parts = []
     tool_calls = []
+
     for part in content:
         tp = part.get("type", "")
         if tp == "text":
@@ -55,23 +60,34 @@ def _anthropic_content_to_chat_message(role: str, content) -> dict:
                              "arguments": json.dumps(part.get("input", {}), ensure_ascii=False)},
             })
         elif tp == "tool_result":
-            result["role"] = "tool"
-            result["tool_call_id"] = part.get("tool_use_id", "")
+            # 每个 tool_result 生成一个独立的 tool 消息
             inner = part.get("content", "")
             if isinstance(inner, list):
-                result["content"] = "".join(
-                    c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
+                tc = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
             elif isinstance(inner, str):
-                result["content"] = inner
+                tc = inner
             else:
-                result["content"] = json.dumps(inner, ensure_ascii=False)
-            return result
-    if text_parts:
-        result["content"] = "".join(text_parts)
-    if tool_calls:
-        result["content"] = result.get("content") or ""
-        result["tool_calls"] = tool_calls
-    return result
+                tc = json.dumps(inner, ensure_ascii=False)
+            # 截断过长内容
+            if len(tc) > 100000:
+                tc = tc[:100000] + "\n...[truncated]"
+            results.append({
+                "role": "tool",
+                "tool_call_id": part.get("tool_use_id", _make_claude_id("toolu")),
+                "content": tc,
+            })
+
+    # 如果当前消息本身（非 tool_result 类型）有 text 或 tool_calls，加到 results 开头
+    if role != "user" or (not results):
+        current = {"role": role, "content": ""}
+        if text_parts:
+            current["content"] = "".join(text_parts)
+        if tool_calls:
+            current["content"] = current.get("content") or ""
+            current["tool_calls"] = tool_calls
+        results.insert(0, current)
+
+    return results
 
 
 def _anthropic_tools_to_chat(tools: list) -> list:
@@ -120,8 +136,8 @@ def anthropic_to_chat(request_body: dict) -> dict:
 
     for msg in request_body.get("messages", []):
         role = msg.get("role", "user")
-        converted = _anthropic_content_to_chat_message(role, msg.get("content", ""))
-        messages.append(converted)
+        converted_list = _anthropic_content_to_chat_messages(role, msg.get("content", ""))
+        messages.extend(converted_list)
 
     # ── 注入推理缓存 ──
     session_id = _claude_session_key(messages)
