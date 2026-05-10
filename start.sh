@@ -6,7 +6,7 @@
 #   PROXY_PORT=9000 ./start.sh
 #   DEEPSEEK_KEY=sk-xxx DEFAULT_MODEL=deepseek-chat ./start.sh
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")"
 
 export PROXY_PORT="${PROXY_PORT:-8080}"
 export ADMIN_PORT="${ADMIN_PORT:-8090}"

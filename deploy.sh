@@ -86,7 +86,7 @@ log "创建安装目录..."
 mkdir -p "${INSTALL_DIR}/certs"
 
 # ── 复制文件 ─────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "${SCRIPT_DIR}/proxy.py" ]; then
     log "从 ${SCRIPT_DIR} 复制文件..."
     cp "${SCRIPT_DIR}/proxy.py" "${INSTALL_DIR}/"

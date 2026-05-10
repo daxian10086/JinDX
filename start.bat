@@ -15,7 +15,7 @@ REM 注意：hosts 劫持和端口转发需要管理员权限，请先以管理�
 REM   .\start.ps1  （推荐，带 hosts 劫持和端口转发）
 REM
 
-cd /d "%~dp0.."
+cd /d "%~dp0"
 
 if not defined PROXY_PORT set PROXY_PORT=8080
 if not defined ADMIN_PORT set ADMIN_PORT=8090

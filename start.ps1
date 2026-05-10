@@ -14,7 +14,7 @@
 
 param()
 
-Set-Location (Join-Path $PSScriptRoot "..")
+Set-Location $PSScriptRoot
 
 # ── 环境变量默认值 ────────────────────────────────────
 
