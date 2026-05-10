@@ -8,7 +8,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from .config import config, DEEPSEEK_BASE
-from .repair import repair_service, diagnose
 from .stats import get_stats as stats_get_stats, get_logs as stats_get_logs
 from .cache import get_memory_sessions_count, get_redis_session_count, is_redis_available, get_redis_info
 
@@ -78,36 +77,6 @@ async def admin_sessions():
 @admin_app.get("/logs")
 async def admin_logs(limit: int = 50):
     return {"logs": stats_get_logs(limit)}
-
-
-@admin_app.get("/repair")
-async def admin_repair(dry_run: bool = False):
-    """诊断并修复服务。dry_run=true 仅诊断不修复。"""
-    diag = repair_service(dry_run=dry_run)
-    return {
-        "kind": diag.kind.name,
-        "detail": diag.detail,
-        "fixed": diag.fixed,
-        "journal_tail": diag.journal_lines[-5:] if diag.journal_lines else [],
-    }
-
-
-@admin_app.post("/repair")
-async def admin_repair_post(request: Request):
-    """POST /repair 等效于 GET /repair (默认执行修复)。"""
-    body = {}
-    try:
-        body = await request.json()
-    except Exception:
-        pass
-    dry_run = body.get("dry_run", False)
-    diag = repair_service(dry_run=dry_run)
-    return {
-        "kind": diag.kind.name,
-        "detail": diag.detail,
-        "fixed": diag.fixed,
-        "journal_tail": diag.journal_lines[-5:] if diag.journal_lines else [],
-    }
 
 
 # ══════════════════════════════════════════════════════════════════════

@@ -37,17 +37,12 @@ def _cfg(key, default=None):
 # 请求转换：Anthropic Messages → DeepSeek Chat Completions
 # ═══════════════════════════════════════════════════════════
 
-def _anthropic_content_to_chat_messages(role: str, content) -> list:
-    """将 Anthropic 消息的 content 转为 DeepSeek 消息列表。
-    当 user 消息含多个 tool_result 时返回多个独立的 tool 消息。
-    """
+def _anthropic_content_to_chat_message(role: str, content) -> dict:
     if isinstance(content, str):
-        return [{"role": role, "content": content}]
-
-    results = []
+        return {"role": role, "content": content}
+    result = {"role": role, "content": ""}
     text_parts = []
     tool_calls = []
-
     for part in content:
         tp = part.get("type", "")
         if tp == "text":
@@ -60,38 +55,46 @@ def _anthropic_content_to_chat_messages(role: str, content) -> list:
                              "arguments": json.dumps(part.get("input", {}), ensure_ascii=False)},
             })
         elif tp == "tool_result":
-            # 每个 tool_result 生成一个独立的 tool 消息
+            result["role"] = "tool"
+            result["tool_call_id"] = part.get("tool_use_id", "")
             inner = part.get("content", "")
             if isinstance(inner, list):
-                tc = "".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
+                result["content"] = "".join(
+                    c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
             elif isinstance(inner, str):
-                tc = inner
+                result["content"] = inner
             else:
-                tc = json.dumps(inner, ensure_ascii=False)
-            # 截断过长内容
-            if len(tc) > 100000:
-                tc = tc[:100000] + "\n...[truncated]"
-            results.append({
-                "role": "tool",
-                "tool_call_id": part.get("tool_use_id", _make_claude_id("toolu")),
-                "content": tc,
-            })
-
-    # 如果当前消息本身（非 tool_result 类型）有 text 或 tool_calls，加到 results 开头
-    if role != "user" or (not results):
-        current = {"role": role, "content": ""}
-        if text_parts:
-            current["content"] = "".join(text_parts)
-        if tool_calls:
-            current["content"] = current.get("content") or ""
-            current["tool_calls"] = tool_calls
-        results.insert(0, current)
-
-    return results
+                result["content"] = json.dumps(inner, ensure_ascii=False)
+            return result
+    if text_parts:
+        result["content"] = "".join(text_parts)
+    if tool_calls:
+        result["content"] = result.get("content") or ""
+        result["tool_calls"] = tool_calls
+    return result
 
 
 def _anthropic_tools_to_chat(tools: list) -> list:
     result = []
+    for tool in tools:
+        schema = tool.get("input_schema", {})
+        params = {"type": schema.get("type", "object")}
+        for key in ("properties", "required", "additionalProperties", "enum",
+                     "oneOf", "anyOf", "allOf", "items", "minItems", "maxItems",
+                     "minProperties", "maxProperties", "uniqueItems"):
+            if key in schema:
+                params[key] = schema[key]
+        result.append({
+            "type": "function",
+            "function": {"name": tool.get("name", ""),
+                         "description": tool.get("description", ""),
+                         "parameters": params},
+        })
+    return result
+
+
+# ── 全局推理缓存桥接 ───────────────────────────────────────
+# Claude Code 没有 Codex 的 session ID 机制，用前 3 条消息的哈希做会话标识
 _CLAUDE_SESSION_CACHE: dict[int, str] = {}  # 基于消息哈希的 session 映射
 
 
@@ -117,8 +120,8 @@ def anthropic_to_chat(request_body: dict) -> dict:
 
     for msg in request_body.get("messages", []):
         role = msg.get("role", "user")
-        converted_list = _anthropic_content_to_chat_messages(role, msg.get("content", ""))
-        messages.extend(converted_list)
+        converted = _anthropic_content_to_chat_message(role, msg.get("content", ""))
+        messages.append(converted)
 
     # ── 注入推理缓存 ──
     session_id = _claude_session_key(messages)
@@ -143,10 +146,6 @@ def anthropic_to_chat(request_body: dict) -> dict:
                     break
 
     _CLAUDE_SESSION_CACHE[id(messages)] = session_id
-    # 限制缓存条目数防止内存泄漏
-    if len(_CLAUDE_SESSION_CACHE) > 1000:
-        while len(_CLAUDE_SESSION_CACHE) > 200:
-            _CLAUDE_SESSION_CACHE.pop(next(iter(_CLAUDE_SESSION_CACHE)), None)
 
     chat = {
         "model": _cfg("default_model", "deepseek-v4-pro"),

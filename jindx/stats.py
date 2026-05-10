@@ -50,10 +50,9 @@ def record_cache(hit: bool):
 def log_error(msg: str):
     """追加到内存环形缓冲区，供仪表盘日志查看器使用。"""
     entry = {"ts": time.time(), "msg": msg[:500]}
-    with _stats_lock:
-        _log_buffer.append(entry)
-        if len(_log_buffer) > _MAX_LOG_BUFFER:
-            del _log_buffer[:len(_log_buffer) - _MAX_LOG_BUFFER]
+    _log_buffer.append(entry)
+    if len(_log_buffer) > _MAX_LOG_BUFFER:
+        del _log_buffer[:len(_log_buffer) - _MAX_LOG_BUFFER]
 
 
 def get_stats() -> dict:
