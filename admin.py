@@ -15,6 +15,31 @@ logger = logging.getLogger(__name__)
 
 admin_app = FastAPI(title="Proxy Admin")
 
+# ── 简单认证（共用 DeepSeek Key 作为 admin token）──────────────────
+
+def _get_admin_token() -> str:
+    """管理面板认证 token：优先 Claude Key，回退 Codex Key。"""
+    key = config.get("claude_deepseek_key", "") or config.get("deepseek_key", "")
+    if not key or key == "sk-your-deepseek-api-key":
+        return ""  # 未配置 key 时跳过认证（首次打开管理面板无密码）
+    return key
+
+
+@admin_app.middleware("http")
+async def admin_auth_middleware(request: Request, call_next):
+    """管理面板 API 认证中间件（仅保护 /config /stats /sessions /logs）。"""
+    protected_prefixes = ("/config", "/stats", "/sessions", "/logs")
+    if any(request.url.path.startswith(p) for p in protected_prefixes):
+        token = _get_admin_token()
+        if token:
+            auth = request.headers.get("Authorization", "")
+            if auth != f"Bearer {token}":
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": "Unauthorized. Use Bearer <deepseek-key> for admin API access."},
+                )
+    return await call_next(request)
+
 
 @admin_app.get("/health")
 async def admin_health():
@@ -270,6 +295,14 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 </div>
 
 <script>
+// Auth — 从配置中读取 key，对受保护接口自动附加 Bearer token
+var _adminToken = '';
+
+function authHeaders() {
+    if (!_adminToken) return {};
+    return {'Authorization': 'Bearer ' + _adminToken};
+}
+
 // Tab switching
 function switchTab(tabId) {
   document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
@@ -318,6 +351,8 @@ async function loadConfig(){
   try{
     var r=await fetch('/config'), cfg=await r.json();
     _configCache = cfg;
+    // 优先用 Claude Key，回退到 Codex Key
+    _adminToken = cfg.claude_deepseek_key || cfg.deepseek_key || '';
     document.getElementById('deepseek_key').value=cfg.deepseek_key||'';
     document.getElementById('deepseek_base').value=cfg.deepseek_base||'';
     document.getElementById('default_model').value=cfg.default_model||'';
@@ -388,7 +423,8 @@ async function saveConfig(){
   if (!claudeRawBase) cfg.claude_deepseek_base = '';
 
   try{
-    var r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+    var h = Object.assign({'Content-Type':'application/json'}, authHeaders());
+    var r=await fetch('/config',{method:'POST',headers:h,body:JSON.stringify(cfg)});
     if(r.ok){ toast(t('已保存并生效','Saved & applied'),true); loadConfig(); }
     else{ var e=await r.json(); toast(t('保存失败','Save failed')+': '+(e.detail||r.status),false); }
   }catch(e){ toast(t('保存失败','Save failed')+': '+e,false); }
@@ -449,7 +485,7 @@ function fmtUptime(sec){
 }
 async function refreshStats(){
   try{
-    var r=await fetch('/stats'), s=await r.json();
+    var r=await fetch('/stats',{headers:authHeaders()}), s=await r.json();
     document.getElementById('stat-uptime').textContent=fmtUptime(s.uptime);
     document.getElementById('stat-requests').textContent=s.total_requests;
     document.getElementById('stat-streams').textContent=s.active_streams;
@@ -469,13 +505,13 @@ async function refreshStats(){
 }
 async function refreshSessions(){
   try{
-    var r=await fetch('/sessions'), s=await r.json();
+    var r=await fetch('/sessions',{headers:authHeaders()}), s=await r.json();
     document.getElementById('stat-sessions').textContent=s.memory_sessions+s.redis_sessions;
   }catch(e){}
 }
 async function refreshLogs(){
   try{
-    var r=await fetch('/logs?limit=20'), data=await r.json(), list=document.getElementById('log-list');
+    var r=await fetch('/logs?limit=20',{headers:authHeaders()}), data=await r.json(), list=document.getElementById('log-list');
     if(data.logs&&data.logs.length){
       list.innerHTML=data.logs.map(function(l){
         return '<div class="log-entry"><span class="log-time">'+new Date(l.ts*1000).toLocaleTimeString()+'</span>'+escHtml(l.msg)+'</div>';

@@ -290,7 +290,7 @@ def responses_to_chat(data: dict) -> dict:
 
     # tool-use 提示仅首轮注入（避免每轮修改 system 消息破坏 prompt cache）
     tools = data.get("tools")
-    has_history = any(m.get("role") == "assistant" for m in messages)
+    has_history = any(m.get("role") in ("assistant", "tool") for m in messages)
     if tools and not has_history and config.get("tool_use_enforcement", True):
         prompt = config.get("tool_use_prompt", "")
         if prompt and messages and messages[0].get("role") == "system":

@@ -1,16 +1,42 @@
 """网页抓取：URL 检测、预取和代理级抓取。"""
 
 import asyncio
+import ipaddress
 import json
 import logging
 import re
 import urllib.request
+from urllib.parse import urlparse
 
 import httpx
 
 from .config import config
 
 logger = logging.getLogger(__name__)
+
+# SSRF 防护：内网 IP 段黑名单
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _is_private_url(url: str) -> bool:
+    """检查 URL 是否指向内网地址。"""
+    try:
+        host = urlparse(url).hostname
+        if not host:
+            return True  # 拒绝空 hostname
+        addr = ipaddress.ip_address(host)
+        return any(addr in net for net in _PRIVATE_NETWORKS)
+    except ValueError:
+        # hostname 不是 IP 地址（是域名），允许通过
+        return False
 
 # ── 常量和工具定义 ─────────────────────────────────────────────────
 
@@ -98,9 +124,16 @@ def _extract_urls_from_messages(messages: list) -> list[str]:
     seen = set()
     urls = []
     for u in all_urls:
-        if u not in seen and not ('127.0.0.1' in u or 'localhost' in u or '0.0.0.0' in u or '::1' in u):
-            seen.add(u)
-            urls.append(u)
+        if u in seen:
+            continue
+        # 过滤内网和 localhost URL（SSRF 防护）
+        if any(skip in u for skip in ('127.0.0.1', 'localhost', '0.0.0.0', '::1')):
+            continue
+        if _is_private_url(u):
+            logger.warning(f"Skipping private/internal URL: {u}")
+            continue
+        seen.add(u)
+        urls.append(u)
     return urls
 
 
@@ -199,6 +232,8 @@ async def execute_web_fetch(args_str: str, http_client: httpx.AsyncClient) -> st
     url = args.get("url", "")
     if not url:
         return "Error: no URL provided"
+    if _is_private_url(url):
+        return f"Error: requests to internal/private addresses are blocked ({url})"
     method = args.get("method", "GET").upper()
     headers = args.get("headers") or {}
     req_body = args.get("body")

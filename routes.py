@@ -1,5 +1,6 @@
 """HTTP、SSE 和 WebSocket API 路由。"""
 
+import asyncio
 import json
 import logging
 import time
@@ -24,16 +25,21 @@ logger = logging.getLogger(__name__)
 # ── 共享 HTTP 客户端池 ──────────────────────────────────────────────
 
 _http_client: httpx.AsyncClient | None = None
+_http_client_lock = asyncio.Lock()
 
 
 async def get_http_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(300.0),
-            trust_env=False,
-            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
-        )
+        async with _http_client_lock:
+            # 双重检查：其他协程可能已创建
+            if _http_client is not None and not _http_client.is_closed:
+                return _http_client
+            _http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(300.0),
+                trust_env=False,
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=100),
+            )
     return _http_client
 
 
@@ -95,6 +101,7 @@ async def _stream_chat(body: dict):
                 yield line + "\n"
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         logger.error(f"Chat stream error: {e}")
+        yield f"data: {json.dumps({'error': {'message': str(e), 'type': 'upstream_error'}})}\n\n"
 
 
 # ── HTTP Responses 端点 ─────────────────────────────────────────────
@@ -618,18 +625,10 @@ async def responses_compact(request: Request):
     Codex CLI 在上下文接近窗口上限时调用此端点，要求压缩/摘要历史对话。
     将 OpenAI compact 请求转为 DeepSeek 摘要请求，返回压缩后的 input。
     """
-    import os
-    import time as _time
     try:
         body = await request.json()
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-    # 先 dump 请求到临时文件用于调试
-    dump_path = "/tmp/jindx_compact_request.json"
-    with open(dump_path, "w") as f:
-        json.dump(body, f, ensure_ascii=False, indent=2)
-    logger.info(f"Compact request dumped to {dump_path} ({len(json.dumps(body, ensure_ascii=False))} bytes)")
 
     # 从请求中提取 input 和 instructions
     inp = body.get("input", [])

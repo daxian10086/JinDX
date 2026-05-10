@@ -131,6 +131,28 @@ def get_memory_sessions_count() -> int:
         return len(_reasoning_cache)
 
 
+def _cleanup_expired_memory_entries(ttl: int):
+    """定期清理过期的内存缓存条目。"""
+    with _cache_lock:
+        now = time.time()
+        expired = [
+            k for k, entries in _reasoning_cache.items()
+            if all(now - e["ts"] >= ttl for e in entries)
+        ]
+        for k in expired:
+            _reasoning_cache.pop(k, None)
+        if expired:
+            logger.debug(f"Cleaned {len(expired)} expired memory cache entries")
+
+
+async def memory_cache_cleanup_loop(interval: int = 300):
+    """后台定期清理过期内存缓存条目（每 5 分钟）。"""
+    while True:
+        await asyncio.sleep(interval)
+        cache_ttl = config.get("reasoning_cache_ttl", 600)
+        _cleanup_expired_memory_entries(cache_ttl)
+
+
 # ── Redis 缓存操作 ──────────────────────────────────────────────────
 
 def _cache_redis_get(source: Source, session_id: str, ttl: int) -> list[str]:

@@ -10,7 +10,6 @@ Chat Completions + Responses API proxy for DeepSeek V4 (and compatible models).
 import asyncio
 import logging
 import os
-import ssl
 from urllib.parse import urlparse
 
 import uvicorn
@@ -132,8 +131,9 @@ if __name__ == "__main__":
 
     async def _serve_all():
         # 启动 Redis 健康检查后台任务
-        from jindx.cache import redis_health_check_loop
+        from jindx.cache import redis_health_check_loop, memory_cache_cleanup_loop
         asyncio.create_task(redis_health_check_loop())
+        asyncio.create_task(memory_cache_cleanup_loop())
 
         connect_task = asyncio.create_task(_run_connect_server())
 

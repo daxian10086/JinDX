@@ -308,7 +308,8 @@ async def _stream_anthropic_from_chat(chat_request: dict, session_id: str,
         async with client.stream("POST", upstream_url, json=chat_request, headers=auth_headers) as up:
             if up.status_code != 200:
                 body_str = (await up.aread()).decode()[:2000]
-                record_error(up.status_code, body_str)
+                record_error(up.status_code)
+                record_upstream_error(body_str)
                 log_error(f"Claude stream {up.status_code}: {body_str}")
                 yield _emit("error", {"type": "error",
                     "error": {"type": "api_error", "message": body_str}})
