@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")"
 
-TOKEN="${GITHUB_TOKEN:-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}"
+TOKEN="${GITHUB_TOKEN:-}"
 REPO="daxian10086/JinDX"
 API_IP="140.82.113.5"
 BRANCH="master"
