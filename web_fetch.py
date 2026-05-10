@@ -1,5 +1,6 @@
 """网页抓取：URL 检测、预取和代理级抓取。"""
 
+import asyncio
 import json
 import logging
 import re
@@ -85,11 +86,8 @@ def ensure_web_fetch_hint(messages: list) -> list:
 
 # ── URL 预取 ────────────────────────────────────────────────────────
 
-def prefetch_urls_into_messages(messages: list) -> None:
-    """抓取用户消息中的 URL 并将内容追加为上下文。
-
-    这样模型可以直接获得网页内容，无需发起 web_fetch 工具调用。
-    """
+def _extract_urls_from_messages(messages: list) -> list[str]:
+    """从消息列表中提取去重后的 URL 列表（跳过 localhost/内部 URL）。"""
     all_urls: list[str] = []
     for msg in messages:
         if msg.get("role") in ("user", "system"):
@@ -97,16 +95,60 @@ def prefetch_urls_into_messages(messages: list) -> None:
             if isinstance(content, str):
                 all_urls.extend(extract_urls_from_text(content))
 
-    if not all_urls:
-        return
-
-    # 去重，保持顺序，跳过 localhost/内部 URL
     seen = set()
     urls = []
     for u in all_urls:
         if u not in seen and not ('127.0.0.1' in u or 'localhost' in u or '0.0.0.0' in u or '::1' in u):
             seen.add(u)
             urls.append(u)
+    return urls
+
+
+def _fetch_url_sync(url: str, fetch_timeout: int, max_body: int) -> tuple[str, str | None]:
+    """同步抓取单个 URL，返回 (url, content_or_None_on_error)。"""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; ChatProxy/1.0)"})
+        with urllib.request.urlopen(req, timeout=fetch_timeout) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+            ct = resp.headers.get("Content-Type", "")
+            if "html" in ct:
+                text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r'<[^>]+>', ' ', text)
+                text = re.sub(r'\s+', ' ', text).strip()
+            if len(text) > max_body:
+                text = text[:max_body] + f"\n...[truncated, {len(text) - max_body} chars]"
+            return (url, text)
+    except (OSError, ValueError, TimeoutError) as e:
+        logger.warning(f"Pre-fetch failed for {url}: {e}")
+        return (url, None)
+
+
+def _inject_fetched_context(messages: list, fetched: dict[str, str]) -> None:
+    """将抓取到的网页内容注入用户消息末尾。"""
+    if not fetched:
+        return
+    context = "\n\n---\n\n".join(
+        f"[Web content from {url}]\n{content}"
+        for url, content in fetched.items()
+    )
+    context = f"\n\n[Pre-fetched web content — use this directly, no need to call web_fetch]\n\n{context}"
+    for msg in reversed(messages):
+        if msg.get("role") == "user" and isinstance(msg.get("content"), str):
+            msg["content"] = msg["content"] + context
+            return
+    messages.append({"role": "user", "content": context})
+
+
+def prefetch_urls_into_messages(messages: list) -> None:
+    """抓取用户消息中的 URL 并将内容追加为上下文（同步，在 executor 中运行）。
+
+    此函数使用 urllib 做同步请求，调用方应在 async 上下文中通过
+    run_in_executor 调用以避免阻塞事件循环。
+    """
+    urls = _extract_urls_from_messages(messages)
+    if not urls:
+        return
 
     max_urls = config.get("web_fetch_max_urls", 5)
     fetch_timeout = config.get("web_fetch_timeout", 10)
@@ -114,35 +156,36 @@ def prefetch_urls_into_messages(messages: list) -> None:
 
     fetched: dict[str, str] = {}
     for url in urls[:max_urls]:
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; ChatProxy/1.0)"})
-            with urllib.request.urlopen(req, timeout=fetch_timeout) as resp:
-                text = resp.read().decode("utf-8", errors="replace")
-                ct = resp.headers.get("Content-Type", "")
-                if "html" in ct:
-                    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
-                    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-                    text = re.sub(r'<[^>]+>', ' ', text)
-                    text = re.sub(r'\s+', ' ', text).strip()
-                if len(text) > max_body:
-                    text = text[:max_body] + f"\n...[truncated, {len(text) - max_body} chars]"
-                fetched[url] = text
-                logger.info(f"Pre-fetched {url} -> {len(text)} chars")
-        except (OSError, ValueError, TimeoutError) as e:
-            logger.warning(f"Pre-fetch failed for {url}: {e}")
+        url, content = _fetch_url_sync(url, fetch_timeout, max_body)
+        if content is not None:
+            fetched[url] = content
+            logger.info(f"Pre-fetched {url} -> {len(content)} chars")
 
-    if fetched:
-        context = "\n\n---\n\n".join(
-            f"[Web content from {url}]\n{content}"
-            for url, content in fetched.items()
-        )
-        context = f"\n\n[Pre-fetched web content — use this directly, no need to call web_fetch]\n\n{context}"
-        for msg in reversed(messages):
-            if msg.get("role") == "user" and isinstance(msg.get("content"), str):
-                msg["content"] = msg["content"] + context
-                break
-        else:
-            messages.append({"role": "user", "content": context})
+    _inject_fetched_context(messages, fetched)
+
+
+async def prefetch_urls_async(messages: list) -> None:
+    """抓取用户消息中的 URL（异步版本，在线程池中执行 HTTP 请求）。"""
+    urls = _extract_urls_from_messages(messages)
+    if not urls:
+        return
+
+    max_urls = config.get("web_fetch_max_urls", 5)
+    fetch_timeout = config.get("web_fetch_timeout", 10)
+    max_body = config.get("web_fetch_max_body", 80000)
+
+    loop = asyncio.get_running_loop()
+    tasks = [
+        loop.run_in_executor(None, _fetch_url_sync, url, fetch_timeout, max_body)
+        for url in urls[:max_urls]
+    ]
+    results = await asyncio.gather(*tasks)
+
+    fetched = {url: content for url, content in results if content is not None}
+    for url, content in fetched.items():
+        logger.info(f"Pre-fetched {url} -> {len(content)} chars")
+
+    _inject_fetched_context(messages, fetched)
 
 
 # ── 代理级 web_fetch 执行 ─────────────────────────────────────────

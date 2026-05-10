@@ -1,4 +1,10 @@
-"""推理缓存：Redis 优先，内存兜底，支持自动重连。"""
+"""推理缓存：Redis 优先，内存兜底，支持自动重连。
+
+Session 隔离：
+  - Codex 与 Claude 的推理缓存完全隔离（按 source 参数区分）
+  - Redis key 格式：reasoning:{source}:{session_id}
+  - 内存缓存 key 格式：{source}:{session_id}
+"""
 
 import asyncio
 import hashlib
@@ -7,7 +13,7 @@ import logging
 import time
 from collections import OrderedDict
 from threading import Lock
-from typing import Optional
+from typing import Literal, Optional
 
 import redis
 
@@ -16,6 +22,8 @@ from .config import REDIS_HOST, REDIS_PORT, REDIS_DB, REASONING_CACHE_MAX, REDIS
 from .stats import record_cache
 
 logger = logging.getLogger(__name__)
+
+Source = Literal["codex", "claude"]
 
 # ── Redis 连接（延迟初始化）─────────────────────────────────────────
 
@@ -71,33 +79,45 @@ def get_redis_info() -> dict:
         return {"status": "disconnected"}
 
 
+# ── 内部 key 构建 ─────────────────────────────────────────────────
+
+def _full_key(source: Source, session_id: str) -> str:
+    """构建内存缓存 key：{source}:{session_id}。"""
+    return f"{source}:{session_id}"
+
+
+def _serialize_key(source: Source, session_id: str) -> str:
+    """构建 Redis key：reasoning:{source}:{session_id}。"""
+    return f"{REDIS_KEY_PREFIX}{source}:{session_id}"
+
+
 # ── 内存缓存 ────────────────────────────────────────────────────────
 
 _reasoning_cache: dict[str, list[dict]] = OrderedDict()
 _cache_lock = Lock()
 
 
-def _cache_memory_get(session_id: str, ttl: int) -> list[str]:
+def _cache_memory_get(full_key: str, ttl: int) -> list[str]:
     """从内存缓存读取推理文本。"""
     with _cache_lock:
-        entries = _reasoning_cache.get(session_id, [])
+        entries = _reasoning_cache.get(full_key, [])
         now = time.time()
         valid = [e for e in entries if now - e["ts"] < ttl]
         if valid:
-            _reasoning_cache[session_id] = valid
+            _reasoning_cache[full_key] = valid
             return [e["text"] for e in valid]
         else:
-            _reasoning_cache.pop(session_id, None)
+            _reasoning_cache.pop(full_key, None)
             return []
 
 
-def _cache_memory_set(session_id: str, reasoning_text: str, ttl: int):
+def _cache_memory_set(full_key: str, reasoning_text: str, ttl: int):
     """写入推理文本到内存缓存。"""
     entry = {"text": reasoning_text, "ts": time.time()}
     with _cache_lock:
-        if session_id not in _reasoning_cache:
-            _reasoning_cache[session_id] = []
-        entries = _reasoning_cache[session_id]
+        if full_key not in _reasoning_cache:
+            _reasoning_cache[full_key] = []
+        entries = _reasoning_cache[full_key]
         entries.append(entry)
         while len(entries) > REASONING_CACHE_MAX:
             entries.pop(0)
@@ -113,47 +133,47 @@ def get_memory_sessions_count() -> int:
 
 # ── Redis 缓存操作 ──────────────────────────────────────────────────
 
-def _cache_redis_get(session_id: str, ttl: int) -> list[str]:
+def _cache_redis_get(source: Source, session_id: str, ttl: int) -> list[str]:
     """从 Redis 读取推理文本。"""
     r = _get_redis()
     if r is None:
         return []
     try:
-        key = f"{REDIS_KEY_PREFIX}{session_id}"
-        raw = r.get(key)
+        rkey = _serialize_key(source, session_id)
+        raw = r.get(rkey)
         if raw:
             entries = json.loads(raw)
             now = time.time()
             valid = [e for e in entries if now - e["ts"] < ttl]
             if valid:
-                r.set(key, json.dumps(valid, ensure_ascii=False), ex=ttl)
+                r.set(rkey, json.dumps(valid, ensure_ascii=False), ex=ttl)
                 return [e["text"] for e in valid]
             else:
-                r.delete(key)
+                r.delete(rkey)
         return []
     except (redis.ConnectionError, redis.TimeoutError, json.JSONDecodeError) as e:
         logger.warning(f"Redis read error: {e}")
         return []
 
 
-def _cache_redis_set(session_id: str, reasoning_text: str, ttl: int):
+def _cache_redis_set(source: Source, session_id: str, reasoning_text: str, ttl: int):
     """写入推理文本到 Redis。"""
     r = _get_redis()
     if r is None:
         return
     try:
-        key = f"{REDIS_KEY_PREFIX}{session_id}"
-        raw = r.get(key)
+        rkey = _serialize_key(source, session_id)
+        raw = r.get(rkey)
         entries = json.loads(raw) if raw else []
         entry = {"text": reasoning_text, "ts": time.time()}
         entries.append(entry)
         while len(entries) > REASONING_CACHE_MAX:
             entries.pop(0)
-        r.set(key, json.dumps(entries, ensure_ascii=False), ex=ttl)
-        logger.info(f"Redis cached reasoning for session {session_id} ({len(entries)} entries)")
+        r.set(rkey, json.dumps(entries, ensure_ascii=False), ex=ttl)
+        logger.info(f"Redis cached reasoning for {rkey} ({len(entries)} entries)")
     except (redis.ConnectionError, redis.TimeoutError, json.JSONDecodeError) as e:
         logger.warning(f"Redis write error, falling back to memory: {e}")
-        _cache_memory_set(session_id, reasoning_text, ttl)
+        _cache_memory_set(_full_key(source, session_id), reasoning_text, ttl)
 
 
 # ── 公开 API ────────────────────────────────────────────────────────
@@ -193,13 +213,18 @@ def get_session_id(data: dict) -> str:
     elif isinstance(inp, str):
         first_user_msg = inp
 
-    inst_hash = hashlib.md5(instructions.encode()).hexdigest()[:8]
+    inst_hash = hashlib.sha256(instructions.encode()).hexdigest()[:8]
     seed = f"{inst_hash}||{first_user_msg}"[:1000]
-    return hashlib.md5(seed.encode()).hexdigest()[:16]
+    return hashlib.sha256(seed.encode()).hexdigest()[:16]
 
 
-def get_cached_reasoning(session_id: str) -> list[str]:
-    """获取会话的缓存推理内容，Redis 优先，内存兜底。"""
+def get_cached_reasoning(source: Source, session_id: str) -> list[str]:
+    """获取会话的缓存推理内容，Redis 优先，内存兜底。
+
+    参数：
+        source: "codex" 或 "claude"，用于隔离两个来源的缓存
+        session_id: 会话标识
+    """
     if not config.get("enable_reasoning_cache", True):
         return []
     cache_ttl = config.get("reasoning_cache_ttl", 600)
@@ -207,7 +232,7 @@ def get_cached_reasoning(session_id: str) -> list[str]:
     # Redis 优先
     if _redis_available:
         try:
-            result = _cache_redis_get(session_id, cache_ttl)
+            result = _cache_redis_get(source, session_id, cache_ttl)
             record_cache(bool(result))
             if result:
                 return result
@@ -215,13 +240,19 @@ def get_cached_reasoning(session_id: str) -> list[str]:
             pass  # 降级到内存
 
     # 内存兜底
-    result = _cache_memory_get(session_id, cache_ttl)
+    result = _cache_memory_get(_full_key(source, session_id), cache_ttl)
     record_cache(bool(result))
     return result
 
 
-def cache_reasoning(session_id: str, reasoning_text: str):
-    """缓存会话的推理文本，Redis 优先，内存兜底。"""
+def cache_reasoning(source: Source, session_id: str, reasoning_text: str):
+    """缓存会话的推理文本，Redis 优先，内存兜底。
+
+    参数：
+        source: "codex" 或 "claude"，用于隔离两个来源的缓存
+        session_id: 会话标识
+        reasoning_text: 推理文本
+    """
     if not reasoning_text or not reasoning_text.strip():
         return
     if not config.get("enable_reasoning_cache", True):
@@ -231,13 +262,13 @@ def cache_reasoning(session_id: str, reasoning_text: str):
 
     if _redis_available:
         try:
-            _cache_redis_set(session_id, reasoning_text, cache_ttl)
+            _cache_redis_set(source, session_id, reasoning_text, cache_ttl)
             return
         except Exception:
             pass  # 降级到内存
 
-    _cache_memory_set(session_id, reasoning_text, cache_ttl)
-    logger.info(f"Memory cached reasoning for session {session_id}")
+    _cache_memory_set(_full_key(source, session_id), reasoning_text, cache_ttl)
+    logger.info(f"Memory cached reasoning for {source}:{session_id}")
 
 
 def get_redis_session_count() -> int:

@@ -3,11 +3,11 @@
 import json
 import logging
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from .config import config, DEEPSEEK_BASE
+from .routes import get_http_client
 from .stats import get_stats as stats_get_stats, get_logs as stats_get_logs
 from .cache import get_memory_sessions_count, get_redis_session_count, is_redis_available, get_redis_info
 
@@ -16,17 +16,11 @@ logger = logging.getLogger(__name__)
 admin_app = FastAPI(title="Proxy Admin")
 
 
-async def _get_http_client() -> httpx.AsyncClient:
-    import asyncio
-    loop = asyncio.get_event_loop()
-    return httpx.AsyncClient(timeout=httpx.Timeout(300.0))
-
-
 @admin_app.get("/health")
 async def admin_health():
     ds_ok = True
     try:
-        client = await _get_http_client()
+        client = await get_http_client()
         deepseek_base = config.get("deepseek_base", DEEPSEEK_BASE)
         headers = {"Authorization": f"Bearer {config.get('deepseek_key', '')}", "Content-Type": "application/json"}
         r = await client.get(f"{deepseek_base}/v1/models", headers=headers, timeout=5)

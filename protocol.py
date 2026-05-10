@@ -277,7 +277,7 @@ def responses_to_chat(data: dict) -> dict:
     messages = _fix_tool_message_ordering(messages)
 
     session_id = get_session_id(data)
-    cached_reasoning = get_cached_reasoning(session_id)
+    cached_reasoning = get_cached_reasoning("codex", session_id)
 
     if cached_reasoning:
         reasoning_idx = 0

@@ -1,5 +1,7 @@
 """统计计数和错误日志缓冲区，线程安全。"""
 
+import logging
+import re
 import time
 from threading import Lock
 
@@ -47,9 +49,22 @@ def record_cache(hit: bool):
             _stats["cache_misses"] += 1
 
 
+_SENSITIVE_PATTERNS = [
+    re.compile(r'sk-[a-zA-Z0-9_-]{20,}'),  # sk- 前缀的 API key
+    re.compile(r'Bearer\s+\S+'),            # Bearer token
+]
+
+
+def sanitize_log(msg: str) -> str:
+    """脱敏处理：移除 API Key 等敏感信息。"""
+    for pattern in _SENSITIVE_PATTERNS:
+        msg = pattern.sub("<REDACTED>", msg)
+    return msg
+
+
 def log_error(msg: str):
     """追加到内存环形缓冲区，供仪表盘日志查看器使用。"""
-    entry = {"ts": time.time(), "msg": msg[:500]}
+    entry = {"ts": time.time(), "msg": sanitize_log(msg[:500])}
     _log_buffer.append(entry)
     if len(_log_buffer) > _MAX_LOG_BUFFER:
         del _log_buffer[:len(_log_buffer) - _MAX_LOG_BUFFER]
@@ -93,3 +108,17 @@ def increment_active_streams():
 def decrement_active_streams():
     with _stats_lock:
         _stats["active_streams"] -= 1
+
+
+class SensitiveDataFilter(logging.Filter):
+    """日志过滤器，自动脱敏 API Key 等敏感信息。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.msg and isinstance(record.msg, str):
+            record.msg = sanitize_log(record.msg)
+        if record.args:
+            record.args = tuple(
+                sanitize_log(str(a)) if isinstance(a, str) else a
+                for a in record.args
+            )
+        return True

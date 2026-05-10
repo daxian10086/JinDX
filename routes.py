@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 _http_client: httpx.AsyncClient | None = None
 
 
-async def _get_http_client() -> httpx.AsyncClient:
+async def get_http_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
@@ -68,7 +68,7 @@ async def chat_completions(request: Request):
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
-    client = await _get_http_client()
+    client = await get_http_client()
     try:
         resp = await client.post(_get_upstream(), json=body, headers=_get_auth_headers())
     except httpx.TimeoutException:
@@ -83,7 +83,7 @@ async def chat_completions(request: Request):
 
 async def _stream_chat(body: dict):
     body["model"] = map_model(body.get("model", ""))
-    client = await _get_http_client()
+    client = await get_http_client()
     try:
         async with client.stream("POST", _get_upstream(), json=body, headers=_get_auth_headers()) as resp:
             if resp.status_code != 200:
@@ -136,7 +136,7 @@ async def responses_http(request: Request):
         )
 
     chat_request = responses_to_chat(body)
-    client = await _get_http_client()
+    client = await get_http_client()
     try:
         resp = await client.post(_get_upstream(), json=chat_request, headers=_get_auth_headers())
         if resp.status_code != 200:
@@ -149,7 +149,7 @@ async def responses_http(request: Request):
         chat_data = resp.json()
         reasoning = chat_data.get("choices", [{}])[0].get("message", {}).get("reasoning_content", "")
         if reasoning:
-            cache_reasoning(get_session_id(body), reasoning)
+            cache_reasoning("codex", get_session_id(body), reasoning)
         return JSONResponse(content=chat_to_responses(chat_data, model))
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Upstream timeout")
@@ -182,7 +182,7 @@ async def _stream_responses_sse_inner(body: dict):
     usage = {}
     tool_calls_by_index: dict[int, dict] = {}
 
-    client = await _get_http_client()
+    client = await get_http_client()
     try:
         async with client.stream("POST", _get_upstream(), json=chat_request, headers=_get_auth_headers()) as upstream:
             if upstream.status_code != 200:
@@ -305,7 +305,7 @@ async def _stream_responses_sse_inner(body: dict):
             yield "data: [DONE]\n\n"
 
             if reasoning_buf:
-                cache_reasoning(get_session_id(body), reasoning_buf)
+                cache_reasoning("codex", get_session_id(body), reasoning_buf)
 
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         record_error(500)
@@ -382,7 +382,7 @@ async def _process_ws_request(ws: WebSocket, body: dict):
     usage = {}
     tool_calls_by_index: dict[int, dict] = {}
 
-    client = await _get_http_client()
+    client = await get_http_client()
     try:
         async with client.stream("POST", _get_upstream(), json=chat_request, headers=_get_auth_headers()) as upstream:
             if upstream.status_code != 200:
@@ -567,7 +567,7 @@ async def _process_ws_request(ws: WebSocket, body: dict):
             })
 
             if reasoning_buf:
-                cache_reasoning(get_session_id(body), reasoning_buf)
+                cache_reasoning("codex", get_session_id(body), reasoning_buf)
             logger.info(f"WS done: reasoning={len(reasoning_buf)}B, content={len(content_buf)}B, "
                         f"tool_calls={len(tool_calls_by_index)}, started={started}, sent_parts={sent_text_parts}")
 
@@ -594,7 +594,7 @@ async def list_models():
 async def health():
     from .cache import get_redis_info, is_redis_available
     try:
-        client = await _get_http_client()
+        client = await get_http_client()
         r = await client.get(f"{config.get('deepseek_base', 'https://api.deepseek.com')}/v1/models", headers=_get_auth_headers())
         upstream = "ok" if r.status_code < 500 else "error"
     except (httpx.TimeoutException, httpx.ConnectError):
@@ -660,7 +660,7 @@ async def responses_compact(request: Request):
     if (cfg_tokens := config.get("max_output_tokens")):
         chat_request["max_tokens"] = cfg_tokens
 
-    client = await _get_http_client()
+    client = await get_http_client()
     try:
         resp = await client.post(_get_upstream(), json=chat_request, headers=_get_auth_headers())
         if resp.status_code != 200:

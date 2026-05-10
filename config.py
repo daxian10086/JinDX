@@ -95,6 +95,7 @@ _DEFAULT_CONFIG = {
     "claude_top_p": None,
     "claude_strip_thinking": True,
     "claude_skip_dangerous_mode": True,
+    "claude_deepseek_thinking_enabled": False,
 }
 
 
@@ -147,6 +148,7 @@ class RuntimeConfig:
             "claude_reasoning_effort", "claude_max_position_embeddings",
             "claude_max_output_tokens", "claude_temperature", "claude_top_p",
             "claude_strip_thinking", "claude_skip_dangerous_mode",
+            "claude_deepseek_thinking_enabled",
         }
         with self._lock:
             new_cfg = dict(self._config)

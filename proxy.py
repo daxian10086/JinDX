@@ -19,8 +19,10 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from jindx.config import config, PROXY_PORT, CONNECT_PORT, TLS_PORT, ADMIN_PORT
 from jindx.tunnel import ensure_certs, _run_connect_server, CERT_FILE, KEY_FILE
 from jindx.admin import admin_app
+from jindx.stats import SensitiveDataFilter
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger().addFilter(SensitiveDataFilter())
 logger = logging.getLogger(__name__)
 
 

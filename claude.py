@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import config
 from .cache import get_cached_reasoning, cache_reasoning, get_session_id
+from .routes import get_http_client
 from .stats import record_request, record_error, record_upstream_error, log_error
 
 logger = logging.getLogger(__name__)
@@ -37,16 +38,35 @@ def _cfg(key, default=None):
 # 请求转换：Anthropic Messages → DeepSeek Chat Completions
 # ═══════════════════════════════════════════════════════════
 
-def _anthropic_content_to_chat_message(role: str, content) -> dict:
+def _anthropic_content_to_chat_message(role: str, content) -> list:
+    """将 Anthropic content block 转为 DeepSeek Chat 格式。
+
+    返回 list[dict] — 一个 Anthropic user 消息中的多个 tool_result 会被拆成多条 tool 消息。
+    cc-switch 风格：
+    - thinking block → reasoning_content
+    - redacted_thinking block → 跳过
+    - signature 字段自动忽略
+    - 多个 tool_result 各自独立成 tool 消息（修复 insufficient tool messages 400 错误）
+    - tool 消息发出后 text 才发出（DeepSeek 要求 tool 紧跟 assistant）
+    """
     if isinstance(content, str):
-        return {"role": role, "content": content}
-    result = {"role": role, "content": ""}
+        return [{"role": role, "content": content}]
+
+    results = []
     text_parts = []
+    thinking_parts = []
     tool_calls = []
+
     for part in content:
         tp = part.get("type", "")
         if tp == "text":
             text_parts.append(part.get("text", ""))
+        elif tp == "thinking":
+            thinking_text = part.get("thinking", "")
+            if thinking_text:
+                thinking_parts.append(thinking_text)
+        elif tp == "redacted_thinking":
+            pass
         elif tp == "tool_use":
             tool_calls.append({
                 "id": part.get("id", _make_claude_id("call")),
@@ -55,23 +75,38 @@ def _anthropic_content_to_chat_message(role: str, content) -> dict:
                              "arguments": json.dumps(part.get("input", {}), ensure_ascii=False)},
             })
         elif tp == "tool_result":
-            result["role"] = "tool"
-            result["tool_call_id"] = part.get("tool_use_id", "")
+            # 每个 tool_result 独立成一条 tool 消息（先于 text 发出）
+            tool_msg = {"role": "tool",
+                        "tool_call_id": part.get("tool_use_id", ""),
+                        "content": ""}
             inner = part.get("content", "")
             if isinstance(inner, list):
-                result["content"] = "".join(
-                    c.get("text", "") if isinstance(c, dict) else str(c) for c in inner)
+                tool_texts = []
+                for c in inner:
+                    if isinstance(c, dict):
+                        if c.get("type") == "text":
+                            tool_texts.append(c.get("text", ""))
+                    else:
+                        tool_texts.append(str(c))
+                tool_msg["content"] = "".join(tool_texts)
             elif isinstance(inner, str):
-                result["content"] = inner
+                tool_msg["content"] = inner
             else:
-                result["content"] = json.dumps(inner, ensure_ascii=False)
-            return result
-    if text_parts:
-        result["content"] = "".join(text_parts)
+                tool_msg["content"] = json.dumps(inner, ensure_ascii=False)
+            results.append(tool_msg)
+        # 忽略其他未知类型
+
+    # 所有非 tool_result 内容累积为最后一条消息
+    final = {"role": role, "content": "".join(text_parts)}
     if tool_calls:
-        result["content"] = result.get("content") or ""
-        result["tool_calls"] = tool_calls
-    return result
+        final["content"] = final.get("content") or ""
+        final["tool_calls"] = tool_calls
+    if thinking_parts and role == "assistant":
+        final["reasoning_content"] = "\n".join(thinking_parts)
+
+    # cc-switch 风格：tool 消息在前，text 消息在后
+    results.append(final)
+    return results
 
 
 def _anthropic_tools_to_chat(tools: list) -> list:
@@ -94,8 +129,7 @@ def _anthropic_tools_to_chat(tools: list) -> list:
 
 
 # ── 全局推理缓存桥接 ───────────────────────────────────────
-# Claude Code 没有 Codex 的 session ID 机制，用前 3 条消息的哈希做会话标识
-_CLAUDE_SESSION_CACHE: dict[int, str] = {}  # 基于消息哈希的 session 映射
+# Claude Code 没有 Codex 的 session ID 机制，用前几条消息的哈希做会话标识
 
 
 def _claude_session_key(messages: list) -> str:
@@ -121,11 +155,15 @@ def anthropic_to_chat(request_body: dict) -> dict:
     for msg in request_body.get("messages", []):
         role = msg.get("role", "user")
         converted = _anthropic_content_to_chat_message(role, msg.get("content", ""))
-        messages.append(converted)
+        messages.extend(converted)
 
-    # ── 注入推理缓存 ──
+    # ── 注入推理缓存（cc-switch 风格）──
+    # 优先从本会话缓存恢复 reasoning，回退到全局最近缓存，
+    # 最后用 _ensure_assistant_reasoning 做双重保险
     session_id = _claude_session_key(messages)
-    cached = get_cached_reasoning(session_id)
+    cached = get_cached_reasoning("claude", session_id)
+
+    # 第一层：本会话缓存注入
     if cached:
         idx = 0
         for msg in messages:
@@ -135,25 +173,22 @@ def anthropic_to_chat(request_body: dict) -> dict:
                     idx += 1
         if idx > 0:
             logger.info(f"Claude injected {idx} cached reasoning entries (session {session_id})")
-    else:
-        # 新会话：尝试用全局最近缓存
-        cached_global = get_cached_reasoning("claude_recent")
+
+    # 第二层：全局最近缓存回退（仅对仍缺失的 assistant 消息）
+    if not cached:
+        cached_global = get_cached_reasoning("claude", "recent")
         if cached_global:
             for msg in messages:
-                if msg.get("role") == "assistant":
+                if msg.get("role") == "assistant" and not msg.get("reasoning_content"):
                     msg["reasoning_content"] = cached_global[0]
                     logger.info("Claude injected global recent reasoning")
                     break
 
-    _CLAUDE_SESSION_CACHE[id(messages)] = session_id
-
-    # 确保所有 assistant 消息都有 reasoning_content
+    # 第三层：确保所有 assistant 消息都有 reasoning_content（双重保险）
     # DeepSeek 思考模式要求：如果任一 assistant 消息有 reasoning_content，
     # 则所有 assistant 消息都必须有该字段，否则返回 400 错误。
     from .protocol import _ensure_assistant_reasoning
-    all_cached = get_cached_reasoning(session_id)
-    if not all_cached:
-        all_cached = get_cached_reasoning("claude_recent")
+    all_cached = cached if cached else get_cached_reasoning("claude", "recent")
     _ensure_assistant_reasoning(messages, all_cached)
 
     chat = {
@@ -177,8 +212,11 @@ def anthropic_to_chat(request_body: dict) -> dict:
     elif (cfg_top_p := _cfg("top_p")) is not None:
         chat["top_p"] = cfg_top_p
 
-    # 不传 reasoning_effort — 但 DeepSeek V4 Pro 仍可能自动 thinking
-
+    # 默认关闭 thinking，避免 DeepSeek V4 Pro 自动思考模式引发
+    # "reasoning_content must be passed back to the API" 400 错误。
+    # 可配置 deepseek_thinking_enabled = true 来开启。
+    if not _cfg("deepseek_thinking_enabled", False):
+        chat["thinking"] = {"type": "disabled"}
     tools = request_body.get("tools") or []
     if tools:
         chat["tools"] = _anthropic_tools_to_chat(tools)
@@ -349,8 +387,8 @@ async def _stream_anthropic_from_chat(chat_request: dict, session_id: str,
 
             # ── 缓存推理内容 ──
             if reasoning_buf:
-                cache_reasoning(session_id, reasoning_buf[:8000])
-                cache_reasoning("claude_recent", reasoning_buf[:8000])
+                cache_reasoning("claude", session_id, reasoning_buf[:8000])
+                cache_reasoning("claude", "recent", reasoning_buf[:8000])
                 logger.info(f"Claude cached reasoning for {session_id} ({len(reasoning_buf)} chars)")
 
     except (httpx.TimeoutException, httpx.ConnectError) as e:
@@ -358,20 +396,6 @@ async def _stream_anthropic_from_chat(chat_request: dict, session_id: str,
         yield _emit("error", {"type": "error",
             "error": {"type": "api_error", "message": str(e)}})
 
-
-# ═══════════════════════════════════════════════════════════
-# HTTP 客户端
-# ═══════════════════════════════════════════════════════════
-
-_http_client: httpx.AsyncClient | None = None
-
-async def _get_http_client() -> httpx.AsyncClient:
-    global _http_client
-    if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(300.0), trust_env=False,
-            limits=httpx.Limits(max_keepalive_connections=20, max_connections=100))
-    return _http_client
 
 def _get_upstream() -> str:
     return f"{_cfg('deepseek_base', 'https://api.deepseek.com')}/v1/chat/completions"
@@ -397,11 +421,11 @@ async def claude_messages(request: Request):
         return StreamingResponse(
             _stream_anthropic_from_chat(chat_request, session_id,
                                          _get_upstream(), _get_auth_headers(),
-                                         await _get_http_client()),
+                                         await get_http_client()),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
-    client = await _get_http_client()
+    client = await get_http_client()
     try:
         resp = await client.post(_get_upstream(), json=chat_request, headers=_get_auth_headers())
     except httpx.TimeoutException: raise HTTPException(status_code=504, detail="Upstream timeout")
@@ -418,8 +442,8 @@ async def claude_messages(request: Request):
 
     # 缓存推理内容
     if reasoning_text:
-        cache_reasoning(session_id, reasoning_text[:8000])
-        cache_reasoning("claude_recent", reasoning_text[:8000])
+        cache_reasoning("claude", session_id, reasoning_text[:8000])
+        cache_reasoning("claude", "recent", reasoning_text[:8000])
 
     return JSONResponse(content=claude_response)
 
