@@ -6,7 +6,7 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from .config import config, DEEPSEEK_BASE
+from .config import config, DEEPSEEK_BASE, PROXY_PORT, ADMIN_PORT, TLS_PORT, CONNECT_PORT
 from .routes import get_http_client
 from .stats import get_stats as stats_get_stats, get_logs as stats_get_logs
 from .cache import get_memory_sessions_count, get_redis_session_count, is_redis_available, get_redis_info
@@ -41,7 +41,13 @@ async def admin_page():
 
 @admin_app.get("/config")
 async def admin_get_config():
-    return JSONResponse(content=config.config_dict)
+    cfg = config.config_dict
+    # 注入运行时端口信息（非持久化，仅供前端生成环境变量使用）
+    cfg["PROXY_PORT"] = PROXY_PORT
+    cfg["ADMIN_PORT"] = ADMIN_PORT
+    cfg["TLS_PORT"] = TLS_PORT
+    cfg["CONNECT_PORT"] = CONNECT_PORT
+    return JSONResponse(content=cfg)
 
 
 @admin_app.post("/config")
@@ -90,6 +96,7 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 #topbar { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--card); position: sticky; top: 0; z-index: 10; }
 #topbar h1 { font-size: 20px; color: var(--accent); display: flex; align-items: center; gap: 10px; }
 #topbar h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+.topbar-right { display: flex; gap: 10px; align-items: center; }
 #lang-btn { padding: 4px 14px; border: 1px solid var(--border); border-radius: 4px; background: var(--input-bg); color: var(--fg); cursor: pointer; font-size: 13px; }
 #lang-btn:hover { border-color: var(--accent); }
 #tab-bar { display: flex; border-bottom: 2px solid var(--border); margin-bottom: 16px; }
@@ -124,12 +131,15 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 .row input[type="checkbox"]:checked { background: #238636; border-color: #238636; }
 .row input[type="checkbox"]:checked::after { left: 19px; background: #fff; }
 .row input:focus, .row select:focus, .row textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,0.2); }
+.row .hint { font-size: 11px; color: var(--muted); margin-left: 4px; }
 .btn-row { display: flex; gap: 10px; margin-top: 16px; }
 .btn { padding: 8px 20px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
 .btn-primary { background: #238636; color: #fff; border-color: #238636; }
 .btn-primary:hover { background: #2ea043; }
 .btn-secondary { background: var(--input-bg); color: var(--fg); }
 .btn-secondary:hover { background: #30363d; }
+.btn-copy { background: #1f6feb; color: #fff; border-color: #1f6feb; font-size: 11px; padding: 4px 10px; }
+.btn-copy:hover { background: #388bfd; }
 .model-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
 .model-row input { flex: 1; }
 .model-row button { background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--danger); cursor: pointer; padding: 4px 10px; font-size: 12px; }
@@ -145,12 +155,17 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .status-dot.up { background: var(--green); }
 .status-dot.down { background: var(--danger); }
+.env-box { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; font-family: monospace; font-size: 12px; line-height: 1.8; color: var(--fg); white-space: pre-wrap; word-break: break-all; }
 </style>
 </head>
 <body>
 <div id="topbar">
   <h1><span class="dot" id="status-dot"></span><span data-i18n-zh="JinDX 代理管理" data-i18n-en="JinDX Proxy Manager">JinDX 代理管理</span></h1>
-  <button id="lang-btn" onclick="toggleLang()" data-i18n-zh="English" data-i18n-en="中文">English</button>
+  <div class="topbar-right">
+    <span style="font-size:12px;color:var(--muted);" data-i18n-zh="端口:" data-i18n-en="Port:">端口:</span>
+    <span style="font-size:12px;color:var(--accent);font-family:monospace;">:8090</span>
+    <button id="lang-btn" onclick="toggleLang()" data-i18n-zh="English" data-i18n-en="中文">English</button>
+  </div>
 </div>
 <div id="toast"></div>
 <div id="main">
@@ -163,7 +178,7 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
   <!-- === TAB: Codex === -->
   <div id="tab-codex" class="tab-content active">
   <div class="card"><h2 class="section-toggle" onclick="toggleSection(this)"><span class="icon">&#128268;</span> <span data-i18n-zh="上游连接" data-i18n-en="Upstream API">上游连接</span></h2><div class="section-body">
-    <div class="row"><label>API Key</label><input id="deepseek_key" type="password" placeholder="sk-..." autocomplete="off"></div>
+    <div class="row"><label>API Key</label><input id="deepseek_key" type="password" placeholder="sk-..." autocomplete="off"><span class="hint" data-i18n-zh="Codex 和 Claude 共用此 Key（如 Claude 未单独配置）" data-i18n-en="Shared key for Codex & Claude (if Claude not configured separately)">Codex 和 Claude 共用此 Key（如 Claude 未单独配置）</span></div>
     <div class="row"><label>Base URL</label><input id="deepseek_base" type="text" placeholder="https://api.deepseek.com"></div>
     <div class="row"><label data-i18n-zh="默认模型" data-i18n-en="Default Model">默认模型</label><input id="default_model" type="text" placeholder="deepseek-v4-pro"></div>
   </div></div>
@@ -196,8 +211,8 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
   <!-- === TAB: Claude === -->
   <div id="tab-claude" class="tab-content">
   <div class="card"><h2 class="section-toggle" onclick="toggleSection(this)"><span class="icon">&#128268;</span> <span data-i18n-zh="上游连接" data-i18n-en="Upstream API">上游连接</span></h2><div class="section-body">
-    <div class="row"><label>API Key</label><input id="claude_deepseek_key" type="password" placeholder="sk-..." autocomplete="off"></div>
-    <div class="row"><label>Base URL</label><input id="claude_deepseek_base" type="text" placeholder="https://api.deepseek.com"></div>
+    <div class="row"><label>API Key</label><input id="claude_deepseek_key" type="password" placeholder="sk-..." autocomplete="off"><span class="hint" data-i18n-zh="留空则使用 Codex 的 Key" data-i18n-en="Leave empty to use Codex key">留空则使用 Codex 的 Key</span></div>
+    <div class="row"><label>Base URL</label><input id="claude_deepseek_base" type="text" placeholder="https://api.deepseek.com"><span class="hint" data-i18n-zh="留空则使用 Codex 的 Base URL" data-i18n-en="Leave empty to use Codex Base URL">留空则使用 Codex 的 Base URL</span></div>
     <div class="row"><label data-i18n-zh="默认模型" data-i18n-en="Default Model">默认模型</label><input id="claude_default_model" type="text" placeholder="deepseek-v4-pro"></div>
   </div></div>
   <div class="card"><h2 class="section-toggle" onclick="toggleSection(this)"><span class="icon">&#9881;</span> <span data-i18n-zh="生成参数" data-i18n-en="Generation Defaults">生成参数</span></h2><div class="section-body">
@@ -208,8 +223,9 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
     <div class="row"><label data-i18n-zh="Top P" data-i18n-en="Top P">Top P</label><input id="claude_top_p" type="number" step="0.01" min="0" max="1" placeholder="(unset)"></div>
   </div></div>
   <div class="card"><h2 class="section-toggle" onclick="toggleSection(this)"><span class="icon">&#9881;</span> <span data-i18n-zh="模型选项" data-i18n-en="Model Options">模型选项</span></h2><div class="section-body">
-    <div class="row"><label for="claude_strip_thinking" data-i18n-zh="过滤 Thinking" data-i18n-en="Strip Thinking">过滤 Thinking</label><input id="claude_strip_thinking" type="checkbox" checked></div>
+    <div class="row"><label for="claude_strip_thinking" data-i18n-zh="过滤 Thinking" data-i18n-en="Strip Thinking">过滤 Thinking</label><input id="claude_strip_thinking" type="checkbox" checked><span class="hint" data-i18n-zh="不在 Claude Code 中显示推理过程" data-i18n-en="Hide reasoning in Claude Code output">不在 Claude Code 中显示推理过程</span></div>
     <div class="row"><label for="claude_skip_dangerous_mode" data-i18n-zh="跳过危险模式提示" data-i18n-en="Skip Dangerous Mode Prompt">跳过危险模式提示</label><input id="claude_skip_dangerous_mode" type="checkbox" checked></div>
+    <div class="row"><label for="claude_deepseek_thinking_enabled" data-i18n-zh="启用 DeepSeek Thinking" data-i18n-en="Enable DeepSeek Thinking">启用 DeepSeek Thinking</label><input id="claude_deepseek_thinking_enabled" type="checkbox"><span class="hint" data-i18n-zh="关闭可避免 reasoning_content 400 错误，开启后需确保推理缓存正常" data-i18n-en="Disable to avoid reasoning_content 400 errors; enable only when reasoning cache works">关闭可避免 reasoning_content 400 错误，开启后需确保推理缓存正常</span></div>
   </div></div>
   <div class="btn-row">
     <button class="btn btn-primary" onclick="saveConfig()"><span data-i18n-zh="保存 Claude 配置" data-i18n-en="Save Claude">保存 Claude 配置</span></button>
@@ -231,17 +247,24 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
       <div class="stat-item"><div class="stat-value" id="stat-sessions">--</div><div class="stat-label" data-i18n-zh="活跃会话" data-i18n-en="Sessions">活跃会话</div></div>
     </div>
   </div>
-  <div class="card"><h2><span class="icon">&#9888;</span> <span data-i18n-zh="上游错误" data-i18n-en="Upstream Errors">上游错误</span></h2>
-    <div id="upstream-errors" style="font-size:12px;color:var(--muted);max-height:150px;overflow-y:auto;">--</div>
-  </div>
-  <div class="card"><h2><span class="icon">&#128220;</span> <span data-i18n-zh="最近日志" data-i18n-en="Recent Logs">最近日志</span></h2>
-    <div id="log-list"><span style="color:var(--muted)">--</span></div>
-  </div>
   <div class="card"><h2><span class="icon">&#128225;</span> <span data-i18n-zh="系统状态" data-i18n-en="System Status">系统状态</span></h2>
     <div style="font-size:13px;">
       <div style="margin-bottom:6px;"><span class="status-dot" id="ds-status-dot"></span><span data-i18n-zh="DeepSeek API：" data-i18n-en="DeepSeek API: ">DeepSeek API：</span><span id="ds-status">--</span></div>
       <div style="margin-bottom:6px;"><span class="status-dot" id="redis-status-dot"></span><span>Redis：</span><span id="redis-status">--</span></div>
     </div>
+  </div>
+  <div class="card"><h2><span class="icon">&#128187;</span> <span data-i18n-zh="终端环境变量" data-i18n-en="Terminal Env">终端环境变量</span></h2>
+    <div style="margin-bottom:10px;">
+      <button class="btn btn-copy" onclick="copyEnv('codex')" data-i18n-zh="复制 Codex CLI" data-i18n-en="Copy Codex CLI">复制 Codex CLI</button>
+      <button class="btn btn-copy" onclick="copyEnv('claude')" data-i18n-zh="复制 Claude Code" data-i18n-en="Copy Claude Code">复制 Claude Code</button>
+    </div>
+    <div id="env-display" class="env-box" data-i18n-zh="选择上方按钮查看环境变量" data-i18n-en="Click a button above to see env vars">选择上方按钮查看环境变量</div>
+  </div>
+  <div class="card"><h2><span class="icon">&#9888;</span> <span data-i18n-zh="上游错误" data-i18n-en="Upstream Errors">上游错误</span></h2>
+    <div id="upstream-errors" style="font-size:12px;color:var(--muted);max-height:150px;overflow-y:auto;">--</div>
+  </div>
+  <div class="card"><h2><span class="icon">&#128220;</span> <span data-i18n-zh="最近日志" data-i18n-en="Recent Logs">最近日志</span></h2>
+    <div id="log-list"><span style="color:var(--muted)">--</span></div>
   </div>
 </div>
 </div>
@@ -260,6 +283,11 @@ function toggleLang(){ currentLang=currentLang==='zh'?'en':'zh'; localStorage.se
 function applyLang(){
   document.documentElement.lang=currentLang==='zh'?'zh-CN':'en';
   document.querySelectorAll('[data-i18n-zh]').forEach(function(el){
+    var t=currentLang==='zh'?el.getAttribute('data-i18n-zh'):el.getAttribute('data-i18n-en');
+    if(t) el.textContent=t;
+  });
+  // 更新 hint 的 span
+  document.querySelectorAll('.hint').forEach(function(el){
     var t=currentLang==='zh'?el.getAttribute('data-i18n-zh'):el.getAttribute('data-i18n-en');
     if(t) el.textContent=t;
   });
@@ -283,9 +311,13 @@ function getModelMapping(){
   }); return m;
 }
 function setModelMapping(map){ document.getElementById('model-rows').innerHTML=''; if(map&&Object.keys(map).length) Object.entries(map).forEach(function(e){addModelRow(e[0],e[1]);}); }
+
+var _configCache = {};
+
 async function loadConfig(){
   try{
     var r=await fetch('/config'), cfg=await r.json();
+    _configCache = cfg;
     document.getElementById('deepseek_key').value=cfg.deepseek_key||'';
     document.getElementById('deepseek_base').value=cfg.deepseek_base||'';
     document.getElementById('default_model').value=cfg.default_model||'';
@@ -311,43 +343,104 @@ async function loadConfig(){
     document.getElementById('claude_top_p').value=cfg.claude_top_p!=null?cfg.claude_top_p:'';
     document.getElementById('claude_strip_thinking').checked=cfg.claude_strip_thinking!==false;
     document.getElementById('claude_skip_dangerous_mode').checked=cfg.claude_skip_dangerous_mode!==false;
+    document.getElementById('claude_deepseek_thinking_enabled').checked=cfg.claude_deepseek_thinking_enabled===true;
+    updateEnvDisplay();
     toast(t('配置已加载','Config loaded'),true);
   }catch(e){ toast(t('加载失败','Load failed')+': '+e,false); }
 }
+
 async function saveConfig(){
+  // 自动忽略空 Key（空字符串不覆盖已有配置）
+  var rawKey = document.getElementById('deepseek_key').value.trim();
+  var claudeRawKey = document.getElementById('claude_deepseek_key').value.trim();
+  var claudeRawBase = document.getElementById('claude_deepseek_base').value.trim();
+
   var cfg={
-    deepseek_key:document.getElementById('deepseek_key').value.trim(),
-    deepseek_base:document.getElementById('deepseek_base').value.trim(),
-    default_model:document.getElementById('default_model').value.trim(),
-    model_mapping:getModelMapping(),
-    reasoning_effort:document.getElementById('reasoning_effort').value||null,
-    max_position_embeddings:parseInt(document.getElementById('max_position_embeddings').value)||1000000,
-    max_output_tokens:parseInt(document.getElementById('max_output_tokens').value)||16384,
-    temperature:document.getElementById('temperature').value?parseFloat(document.getElementById('temperature').value):null,
-    top_p:document.getElementById('top_p').value?parseFloat(document.getElementById('top_p').value):null,
-    web_fetch_max_urls:parseInt(document.getElementById('web_fetch_max_urls').value),
-    web_fetch_timeout:parseInt(document.getElementById('web_fetch_timeout').value),
-    web_fetch_max_body:parseInt(document.getElementById('web_fetch_max_body').value),
-    enable_reasoning_cache:document.getElementById('enable_reasoning_cache').checked,
-    reasoning_cache_ttl:parseInt(document.getElementById('reasoning_cache_ttl').value),
+    deepseek_key: rawKey || _configCache.deepseek_key || '',
+    deepseek_base: document.getElementById('deepseek_base').value.trim(),
+    default_model: document.getElementById('default_model').value.trim(),
+    model_mapping: getModelMapping(),
+    reasoning_effort: document.getElementById('reasoning_effort').value||null,
+    max_position_embeddings: parseInt(document.getElementById('max_position_embeddings').value)||1000000,
+    max_output_tokens: parseInt(document.getElementById('max_output_tokens').value)||16384,
+    temperature: document.getElementById('temperature').value?parseFloat(document.getElementById('temperature').value):null,
+    top_p: document.getElementById('top_p').value?parseFloat(document.getElementById('top_p').value):null,
+    web_fetch_max_urls: parseInt(document.getElementById('web_fetch_max_urls').value),
+    web_fetch_timeout: parseInt(document.getElementById('web_fetch_timeout').value),
+    web_fetch_max_body: parseInt(document.getElementById('web_fetch_max_body').value),
+    enable_reasoning_cache: document.getElementById('enable_reasoning_cache').checked,
+    reasoning_cache_ttl: parseInt(document.getElementById('reasoning_cache_ttl').value),
     // Claude
-    claude_deepseek_key:document.getElementById('claude_deepseek_key').value.trim(),
-    claude_deepseek_base:document.getElementById('claude_deepseek_base').value.trim(),
-    claude_default_model:document.getElementById('claude_default_model').value.trim(),
-    claude_reasoning_effort:document.getElementById('claude_reasoning_effort').value||null,
-    claude_max_position_embeddings:parseInt(document.getElementById('claude_max_position_embeddings').value)||1000000,
-    claude_max_output_tokens:parseInt(document.getElementById('claude_max_output_tokens').value)||16384,
-    claude_temperature:document.getElementById('claude_temperature').value?parseFloat(document.getElementById('claude_temperature').value):null,
-    claude_top_p:document.getElementById('claude_top_p').value?parseFloat(document.getElementById('claude_top_p').value):null,
-    claude_strip_thinking:document.getElementById('claude_strip_thinking').checked,
-    claude_skip_dangerous_mode:document.getElementById('claude_skip_dangerous_mode').checked,
+    claude_deepseek_key: claudeRawKey,
+    claude_deepseek_base: claudeRawBase,
+    claude_default_model: document.getElementById('claude_default_model').value.trim(),
+    claude_reasoning_effort: document.getElementById('claude_reasoning_effort').value||null,
+    claude_max_position_embeddings: parseInt(document.getElementById('claude_max_position_embeddings').value)||1000000,
+    claude_max_output_tokens: parseInt(document.getElementById('claude_max_output_tokens').value)||16384,
+    claude_temperature: document.getElementById('claude_temperature').value?parseFloat(document.getElementById('claude_temperature').value):null,
+    claude_top_p: document.getElementById('claude_top_p').value?parseFloat(document.getElementById('claude_top_p').value):null,
+    claude_strip_thinking: document.getElementById('claude_strip_thinking').checked,
+    claude_skip_dangerous_mode: document.getElementById('claude_skip_dangerous_mode').checked,
+    claude_deepseek_thinking_enabled: document.getElementById('claude_deepseek_thinking_enabled').checked,
   };
+  // 过滤掉空字符串的 Claude key 和 base（避免覆盖 fallback 逻辑）
+  if (!claudeRawKey) cfg.claude_deepseek_key = '';
+  if (!claudeRawBase) cfg.claude_deepseek_base = '';
+
   try{
     var r=await fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
     if(r.ok){ toast(t('已保存并生效','Saved & applied'),true); loadConfig(); }
     else{ var e=await r.json(); toast(t('保存失败','Save failed')+': '+(e.detail||r.status),false); }
   }catch(e){ toast(t('保存失败','Save failed')+': '+e,false); }
 }
+
+// ── 环境变量复制 ──
+
+function updateEnvDisplay(){
+  var key = _configCache.deepseek_key || 'sk-your-key';
+  var proxy = 'http://127.0.0.1:' + (_configCache.PROXY_PORT || '8080');
+  var model = _configCache.default_model || 'deepseek-v4-pro';
+  var d = document.getElementById('env-display');
+  d.textContent = 'Codex CLI:\n' +
+    '  $env:OPENAI_BASE_URL="'+proxy+'"\n' +
+    '  $env:OPENAI_API_KEY="'+key+'"\n' +
+    '  codex\n\n' +
+    'Claude Code:\n' +
+    '  $env:ANTHROPIC_BASE_URL="'+proxy+'"\n' +
+    '  $env:ANTHROPIC_API_KEY="'+key+'"\n' +
+    '  $env:ANTHROPIC_MODEL="'+model+'"\n' +
+    '  claude';
+}
+
+async function copyEnv(mode){
+  var key = _configCache.deepseek_key || 'sk-your-key';
+  var proxyPort = _configCache.PROXY_PORT || '8080';
+  var proxy = 'http://127.0.0.1:' + proxyPort;
+  var model = _configCache.default_model || 'deepseek-v4-pro';
+  var text = '';
+  if (mode === 'codex') {
+    text = '$env:OPENAI_BASE_URL="'+proxy+'"\n$env:OPENAI_API_KEY="'+key+'"\ncodex';
+  } else {
+    text = '$env:ANTHROPIC_BASE_URL="'+proxy+'"\n$env:ANTHROPIC_API_KEY="'+key+'"\n$env:ANTHROPIC_MODEL="'+model+'"\nclaude';
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(t('已复制到剪贴板','Copied to clipboard'), true);
+  } catch(e) {
+    // 回退：显示并选中文本
+    var d = document.getElementById('env-display');
+    d.textContent = text;
+    var range = document.createRange();
+    range.selectNodeContents(d);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    toast(t('请手动复制上方文本','Please copy the text above'), false);
+  }
+}
+
+// ── 统计刷新 ──
+
 function fmtUptime(sec){
   if(sec<60) return sec+'s';
   if(sec<3600) return Math.floor(sec/60)+'m';
@@ -397,9 +490,9 @@ async function checkStatus(){
     if(r.ok){
       var s=await r.json();
       document.getElementById('ds-status').textContent=s.deepseek||'OK';
-      document.getElementById('ds-status-dot').className='status-dot up';
+      document.getElementById('ds-status-dot').className='status-dot ' + (s.deepseek==='connected'?'up':'down');
       document.getElementById('redis-status').textContent=s.redis||'OK';
-      document.getElementById('redis-status-dot').className='status-dot up';
+      document.getElementById('redis-status-dot').className='status-dot ' + (s.redis==='connected'?'up':'down');
       document.getElementById('status-dot').className='dot';
     }
   }catch(e){
