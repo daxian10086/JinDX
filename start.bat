@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >NUL
 REM JinDX Windows CMD 启动脚本
 REM
 REM 用法:
