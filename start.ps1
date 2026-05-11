@@ -80,18 +80,20 @@ if ($isAdmin) {
         Write-Host "  [=] hosts 劫持已配置" -ForegroundColor Gray
     }
     # 刷新 DNS 缓存
-    ipconfig /flushdns *>$null;
+    ipconfig /flushdns *>$null
+}
 
-    # ── 步骤 2：配置端口转发 (443 → 8444) ──────────────────
+# ── 步骤 2：配置端口转发 (443 → 8444) ──────────────────
 
-    $fwRuleName = "JinDX Port Forward 443 to 8444"
+if ($isAdmin) {
     $existingRule = netsh interface portproxy show v4tov4 | Select-String "443"
     if (-not $existingRule) {
-        netsh interface portproxy add v4tov4 listenport=443 listenaddress=127.0.0.1 connectport=$env:TLS_PORT connectaddress=127.0.0.1 *>$null;
+        netsh interface portproxy add v4tov4 listenport=443 listenaddress=127.0.0.1 connectport=$env:TLS_PORT connectaddress=127.0.0.1 *>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  [+] netsh: 127.0.0.1:443 → 127.0.0.1:$env:TLS_PORT" -ForegroundColor Green
         }
-    } else {
+    }
+    else {
         Write-Host "  [=] 端口转发已配置" -ForegroundColor Gray
     }
 }
