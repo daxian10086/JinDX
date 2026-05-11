@@ -6,11 +6,12 @@
 #   $env:PROXY_PORT=9000; .\start.ps1
 #
 # 功能：
-#   1. 自动安装 Python 依赖（清华镜像回退）
-#   2. 自动配置 hosts 劫持（将 api.openai.com 等指向 127.0.0.1）
-#   3. 自动配置端口转发（netsh 将 443 -> 8444）
-#   4. 启动 JinDX 代理服务
-#   5. 输出 Codex CLI / Claude Code 环境变量配置
+#   1. 自动检查/配置 DeepSeek API Key（无 key 时交互式输入）
+#   2. 自动安装 Python 依赖（清华镜像回退）
+#   3. 自动配置 hosts 劫持（将 api.openai.com 等指向 127.0.0.1）
+#   4. 自动配置端口转发（netsh 将 443 -> 8444）
+#   5. 启动 JinDX 代理服务
+#   6. 输出 Codex CLI / Claude Code 环境变量配置
 
 param()
 
@@ -96,6 +97,74 @@ $env:REDIS_PORT              = if ($env:REDIS_PORT)              { $env:REDIS_PO
 $env:REDIS_DB                = if ($env:REDIS_DB)                { $env:REDIS_DB }                else { "0" }
 $env:CONNECT_PORT            = if ($env:CONNECT_PORT)            { $env:CONNECT_PORT }            else { "8443" }
 $env:TLS_PORT                = if ($env:TLS_PORT)                { $env:TLS_PORT }                else { "8444" }
+
+# -- 步骤 0：检查/配置 DeepSeek API Key -----------------
+
+$configFile = if ($env:PROXY_CONFIG_FILE) { $env:PROXY_CONFIG_FILE } else { "$env:APPDATA\proxy-config.json" }
+
+# 先从配置文件读取已有 key（如果环境变量还是默认值）
+$savedKey = ""
+if (Test-Path $configFile) {
+    try {
+        $cfg = Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        $savedKey = if ($cfg.claude_deepseek_key) { $cfg.claude_deepseek_key }
+                    elseif ($cfg.deepseek_key)     { $cfg.deepseek_key }
+                    else { "" }
+    } catch { }
+}
+
+$needPrompt = $false
+if ($env:DEEPSEEK_KEY -eq "sk-your-deepseek-api-key" -or -not $env:DEEPSEEK_KEY) {
+    if ($savedKey -and $savedKey -ne "sk-your-deepseek-api-key") {
+        # 配置文件中有有效 key，同步到环境变量
+        $env:DEEPSEEK_KEY = $savedKey
+        Write-Host "  [+] 从配置文件加载 API Key" -ForegroundColor Green
+    } else {
+        $needPrompt = $true
+    }
+}
+
+if ($needPrompt) {
+    Write-Host ""
+    Write-Host "=========================================="  -ForegroundColor Cyan
+    Write-Host "  首次运行 - 请配置 DeepSeek API Key"        -ForegroundColor Yellow
+    Write-Host "=========================================="  -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  获取 Key: https://platform.deepseek.com/api_keys" -ForegroundColor Gray
+    Write-Host "  之后可在管理面板 http://127.0.0.1:$($env:ADMIN_PORT) 修改" -ForegroundColor Gray
+    Write-Host ""
+
+    $inputKey = Read-Host "  请输入你的 DeepSeek API Key (sk-...)"
+
+    if (-not $inputKey -or $inputKey.Trim() -eq "") {
+        Write-Host ""
+        Write-Host "  [X] 未输入 API Key，无法启动" -ForegroundColor Red
+        Write-Host "      可通过环境变量设置: `$env:DEEPSEEK_KEY=`"sk-xxx`"; .\start.ps1" -ForegroundColor Yellow
+        exit 1
+    }
+
+    $inputKey = $inputKey.Trim()
+    $env:DEEPSEEK_KEY = $inputKey
+
+    # 持久化到配置文件
+    try {
+        $dir = Split-Path $configFile -Parent
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+
+        $cfgObj = @{ deepseek_key = $inputKey }
+        if (Test-Path $configFile) {
+            try {
+                $existing = Get-Content $configFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                foreach ($p in $existing.PSObject.Properties) { $cfgObj[$p.Name] = $p.Value }
+            } catch { }
+        }
+        $cfgObj | ConvertTo-Json -Depth 5 | Set-Content $configFile -Encoding UTF8
+        Write-Host "  [+] API Key 已保存到 $configFile" -ForegroundColor Green
+    } catch {
+        Write-Host "  [!] 配置文件保存失败: $_" -ForegroundColor Yellow
+        Write-Host "  [!] Key 仅对本次运行生效，下次需要重新输入" -ForegroundColor Yellow
+    }
+}
 
 Write-Host ""
 Write-Host "=========================================="  -ForegroundColor Cyan

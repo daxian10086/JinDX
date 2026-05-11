@@ -7,13 +7,13 @@ REM   set DEEPSEEK_KEY=sk-xxx && start.bat
 REM   set PROXY_PORT=9000 && start.bat
 REM
 REM 功能:
-REM   1. 自动安装 Python 依赖（清华镜像回退）
-REM   2. 启动 JinDX 代理服务
-REM   3. 输出 Codex CLI 环境变量配置
+REM   1. 自动检查/配置 DeepSeek API Key（无 key 时交互式输入）
+REM   2. 自动安装 Python 依赖（清华镜像回退）
+REM   3. 启动 JinDX 代理服务
+REM   4. 输出 Codex CLI 环境变量配置
 REM
 REM 注意：hosts 劫持和端口转发需要管理员权限，请先以管理员身份运行：
 REM   .\start.ps1  （推荐，带 hosts 劫持和端口转发）
-REM
 
 cd /d "%~dp0"
 
@@ -29,6 +29,51 @@ if not defined REDIS_PORT set REDIS_PORT=6379
 if not defined REDIS_DB set REDIS_DB=0
 if not defined CONNECT_PORT set CONNECT_PORT=8443
 if not defined TLS_PORT set TLS_PORT=8444
+
+REM ── 检查/配置 DeepSeek API Key ─────────────────
+
+set CONFIG_FILE=%APPDATA%\proxy-config.json
+set NEED_KEY=0
+if "%DEEPSEEK_KEY%"=="sk-your-deepseek-api-key" set NEED_KEY=1
+if "%DEEPSEEK_KEY%"=="" set NEED_KEY=1
+
+if "%NEED_KEY%"=="1" (
+    if exist "%CONFIG_FILE%" (
+        powershell -NoProfile -Command "$k=(Get-Content '%CONFIG_FILE%' -Raw -Encoding UTF8|ConvertFrom-Json|Select-Object -ExpandProperty deepseek_key -ErrorAction SilentlyContinue); if($k -and $k -ne 'sk-your-deepseek-api-key'){Write-Output $k}" > "%TEMP%\jindx_saved_key.txt" 2>NUL
+        set /p SAVED_KEY=<"%TEMP%\jindx_saved_key.txt" 2>NUL
+        del "%TEMP%\jindx_saved_key.txt" 2>NUL
+        if not "%SAVED_KEY%"=="" (
+            set DEEPSEEK_KEY=%SAVED_KEY%
+            set NEED_KEY=0
+            echo  [+] 从配置文件加载 API Key
+        )
+    )
+)
+
+if "%NEED_KEY%"=="1" (
+    echo.
+    echo ==========================================
+    echo   首次运行 - 请配置 DeepSeek API Key
+    echo ==========================================
+    echo.
+    echo   获取 Key: https://platform.deepseek.com/api_keys
+    echo.
+    set /p DEEPSEEK_KEY="  请输入你的 DeepSeek API Key (sk-...): "
+    if "%DEEPSEEK_KEY%"=="" (
+        echo.
+        echo  [X] 未输入 API Key，无法启动
+        echo      可通过环境变量设置: set DEEPSEEK_KEY=sk-xxx ^&^& start.bat
+        pause
+        exit /b 1
+    )
+    REM 持久化到配置文件
+    powershell -NoProfile -Command "$f='%CONFIG_FILE%';$d=Split-Path $f -Parent;if(-not(Test-Path $d)){New-Item -ItemType Directory $d -Force|Out-Null};$c=@{};if(Test-Path $f){try{$e=Get-Content $f -Raw -Encoding UTF8|ConvertFrom-Json;foreach($p in $e.PSObject.Properties){$c[$p.Name]=$p.Value}}catch{}}$c['deepseek_key']='%DEEPSEEK_KEY%';$c|ConvertTo-Json -Depth 5|Set-Content $f -Encoding UTF8"
+    if %ERRORLEVEL% equ 0 (
+        echo  [+] API Key 已保存到 %CONFIG_FILE%
+    ) else (
+        echo  [!] 配置文件保存失败，Key 仅对本次运行生效
+    )
+)
 
 echo.
 echo ==========================================
@@ -57,7 +102,7 @@ REM ── 提示 Codex CLI 配置 ───────────────
 
 echo   Codex CLI 配置（在新的终端执行）:
 echo     set OPENAI_BASE_URL=http://127.0.0.1:%PROXY_PORT%
-echo     set OPENAI_API_KEY=你的 DeepSeek Key
+echo     set OPENAI_API_KEY=%%DEEPSEEK_KEY%%
 echo     codex
 echo.
 echo   推荐以管理员身份运行 start.ps1（自动配置 hosts 劫持 + 端口转发）
