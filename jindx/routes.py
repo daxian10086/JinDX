@@ -382,7 +382,27 @@ async def _process_ws_request(ws: WebSocket, body: dict):
     chat_request = responses_to_chat(body)
     chat_request["stream"] = True
 
-    started = False
+    # 在等待上游响应之前立即发送初始事件，防止长上下文场景下
+    # DeepSeek 长时间无响应导致 WebSocket 被判定为断连。
+    await ws.send_json({
+        "type": "response.created",
+        "response": {
+            "id": resp_id, "object": "response",
+            "created_at": int(time.time()),
+            "status": "in_progress", "model": model, "output": [],
+        }
+    })
+    await ws.send_json({
+        "type": "response.in_progress",
+        "response": {"id": resp_id, "object": "response", "status": "in_progress", "model": model}
+    })
+    await ws.send_json({
+        "type": "response.output_item.added",
+        "output_index": output_index,
+        "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}
+    })
+
+    started = True
     sent_text_parts = False
     content_buf = ""
     reasoning_buf = ""
