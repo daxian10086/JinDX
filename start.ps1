@@ -80,7 +80,7 @@ if ($isAdmin) {
         Write-Host "  [=] hosts 劫持已配置" -ForegroundColor Gray
     }
     # 刷新 DNS 缓存
-    ipconfig /flushdns 2>$null | Out-Null
+    ipconfig /flushdns *>$null
 }
 
 # ── 步骤 2：配置端口转发 (443 → 8444) ──────────────────
@@ -89,7 +89,7 @@ if ($isAdmin) {
     $fwRuleName = "JinDX Port Forward 443 to 8444"
     $existingRule = netsh interface portproxy show v4tov4 | Select-String "443"
     if (-not $existingRule) {
-        netsh interface portproxy add v4tov4 listenport=443 listenaddress=127.0.0.1 connectport=$env:TLS_PORT connectaddress=127.0.0.1 2>$null
+        netsh interface portproxy add v4tov4 listenport=443 listenaddress=127.0.0.1 connectport=$env:TLS_PORT connectaddress=127.0.0.1 *>$null
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  [+] netsh: 127.0.0.1:443 → 127.0.0.1:$env:TLS_PORT" -ForegroundColor Green
         }
@@ -100,10 +100,10 @@ if ($isAdmin) {
 
 # ── 步骤 3：安装 Python 依赖 ────────────────────────────
 
-python -c "import fastapi,uvicorn,httpx,redis,cryptography" 2>$null
+python -c "import fastapi,uvicorn,httpx,redis,cryptography" *>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  [*] 安装 Python 依赖..." -ForegroundColor Yellow
-    pip install -q fastapi "uvicorn[standard]" httpx redis cryptography 2>$null
+    pip install -q fastapi "uvicorn[standard]" httpx redis cryptography *>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [*] 默认 PyPI 不可用，切换到清华镜像..." -ForegroundColor Yellow
         pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" httpx redis cryptography
