@@ -248,6 +248,46 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "  [+] 依赖安装完成" -ForegroundColor Green
 }
 
+# -- 步骤 3.5：自动配置 Codex CLI config.toml ------------
+
+$codexConfigDir = "$env:USERPROFILE\.codex"
+$codexConfigFile = "$codexConfigDir\config.toml"
+
+$codexConfigContent = @"
+model = "gpt-5.5"
+model_reasoning_effort = "xhigh"
+model_provider = "openai_http"
+
+[model_providers.openai_http]
+name = "JinDx Proxy (DeepSeek)"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = true
+base_url = "http://127.0.0.1:$env:PROXY_PORT"
+"@
+
+$needsUpdate = $false
+
+if (Test-Path $codexConfigFile) {
+    $existing = Get-Content $codexConfigFile -Raw
+    if ($existing -notmatch "model_provider" -or $existing -notmatch "127\.0\.0\.1") {
+        $needsUpdate = $true
+        $backupPath = "$codexConfigFile.bak"
+        Copy-Item $codexConfigFile $backupPath -Force
+        Write-Host "  [=] 已备份原 Codex 配置到 $backupPath" -ForegroundColor Gray
+    }
+} else {
+    $needsUpdate = $true
+    New-Item -ItemType Directory -Path $codexConfigDir -Force | Out-Null
+}
+
+if ($needsUpdate) {
+    Set-Content -Path $codexConfigFile -Value $codexConfigContent -Encoding UTF8
+    Write-Host "  [+] Codex config.toml 已自动配置 -> http://127.0.0.1:$($env:PROXY_PORT)" -ForegroundColor Green
+} else {
+    Write-Host "  [=] Codex config.toml 已是 JinDx 代理配置" -ForegroundColor Gray
+}
+
 # -- 步骤 4：启动代理 ------------------------------------
 
 Write-Host ""

@@ -115,4 +115,43 @@ install_deps() {
 }
 install_deps
 
+# ── 自动配置 Codex CLI config.toml ──────────────────
+
+CODEX_CONFIG_DIR="$HOME/.codex"
+CODEX_CONFIG_FILE="$CODEX_CONFIG_DIR/config.toml"
+
+CODEX_CONFIG_CONTENT=$(cat << EOF
+model = "gpt-5.5"
+model_reasoning_effort = "xhigh"
+model_provider = "openai_http"
+
+[model_providers.openai_http]
+name = "JinDx Proxy (DeepSeek)"
+wire_api = "responses"
+requires_openai_auth = true
+supports_websockets = true
+base_url = "http://127.0.0.1:$PROXY_PORT"
+EOF
+)
+
+NEED_UPDATE=0
+
+if [ -f "$CODEX_CONFIG_FILE" ]; then
+    if ! grep -q "model_provider" "$CODEX_CONFIG_FILE" 2>/dev/null || ! grep -q "127\.0\.0\.1" "$CODEX_CONFIG_FILE" 2>/dev/null; then
+        NEED_UPDATE=1
+        cp "$CODEX_CONFIG_FILE" "$CODEX_CONFIG_FILE.bak"
+        echo "  [=] Backed up existing Codex config to $CODEX_CONFIG_FILE.bak"
+    fi
+else
+    NEED_UPDATE=1
+    mkdir -p "$CODEX_CONFIG_DIR"
+fi
+
+if [ "$NEED_UPDATE" = "1" ]; then
+    echo "$CODEX_CONFIG_CONTENT" > "$CODEX_CONFIG_FILE"
+    echo "  [+] Codex config.toml auto-configured -> http://127.0.0.1:$PROXY_PORT"
+else
+    echo "  [=] Codex config.toml already using JinDx proxy"
+fi
+
 exec python3 proxy.py
