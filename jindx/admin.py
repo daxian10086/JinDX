@@ -181,6 +181,12 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 .status-dot.up { background: var(--green); }
 .status-dot.down { background: var(--danger); }
 .env-box { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 10px 12px; font-family: monospace; font-size: 12px; line-height: 1.8; color: var(--fg); white-space: pre-wrap; word-break: break-all; }
+#token-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; align-items: center; justify-content: center; }
+#token-overlay .token-dialog { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 24px; width: 400px; max-width: 90vw; }
+#token-overlay .token-dialog h3 { color: var(--accent); margin-bottom: 8px; font-size: 16px; }
+#token-overlay .token-dialog p { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+#token-overlay .token-dialog input { background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); padding: 8px 10px; font-size: 13px; }
+#token-overlay .token-dialog input:focus { outline: none; border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -295,8 +301,21 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 </div>
 
 <script>
-// Auth — 从配置中读取 key，对受保护接口自动附加 Bearer token
+// Auth — 多重来源获取 token（localStorage / URL / 手动输入），解决首次配置后无法自举的问题
+var TOKEN_KEY='jindx_admin_token';
 var _adminToken = '';
+
+(function loadSavedToken(){
+  // 1. URL ?token= 参数（最高优先级，手动指定）
+  var p = new URLSearchParams(window.location.search);
+  var ut = p.get('token');
+  if (ut) { _adminToken = ut; localStorage.setItem(TOKEN_KEY, ut);
+    var u = new URL(window.location); u.searchParams.delete('token');
+    window.history.replaceState({}, '', u); return; }
+  // 2. localStorage 缓存
+  var s = localStorage.getItem(TOKEN_KEY);
+  if (s) _adminToken = s;
+})();
 
 function authHeaders() {
     if (!_adminToken) return {};
@@ -330,6 +349,38 @@ function applyLang(){
 function t(zh,en){ return currentLang==='zh'?zh:en; }
 function toggleSection(h){ h.nextElementSibling.classList.toggle('collapsed'); }
 function toast(msg,ok){ var t=document.getElementById('toast'); t.textContent=msg; t.className=(ok?'ok':'err')+' show'; setTimeout(function(){t.classList.remove('show');},2200); }
+// ── Token 输入弹窗（首次认证或 token 过期时弹出）──────────────────
+function showTokenPrompt(msg){
+  var overlay = document.getElementById('token-overlay');
+  if(!overlay){
+    overlay = document.createElement('div'); overlay.id='token-overlay';
+    overlay.innerHTML = '<div class="token-dialog"><h3>'+t('管理面板认证','Admin Auth')+'</h3>'+
+      '<p id="token-prompt-msg"></p>'+
+      '<input id="token-prompt-input" type="password" placeholder="sk-..." autocomplete="off" style="width:100%;margin:8px 0;">'+
+      '<div style="display:flex;gap:8px;justify-content:flex-end;">'+
+        '<button class="btn btn-secondary" onclick="hideTokenPrompt()">'+t('取消','Cancel')+'</button>'+
+        '<button class="btn btn-primary" onclick="submitToken()">'+t('确认','Confirm')+'</button>'+
+      '</div></div>';
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('token-prompt-msg').textContent=msg||t('请输入你的 DeepSeek API Key 作为管理面板认证令牌','Enter your DeepSeek API Key as admin token');
+  document.getElementById('token-prompt-input').value='';
+  overlay.style.display='flex';
+  setTimeout(function(){ document.getElementById('token-prompt-input').focus(); },100);
+}
+function hideTokenPrompt(){
+  document.getElementById('token-overlay').style.display='none';
+}
+async function submitToken(){
+  var inp = document.getElementById('token-prompt-input');
+  var token = inp.value.trim();
+  if(!token){ toast(t('请输入令牌','Please enter a token'),false); return; }
+  _adminToken = token;
+  localStorage.setItem(TOKEN_KEY, token);
+  hideTokenPrompt();
+  await loadConfig();
+  refreshStats(); refreshSessions(); refreshLogs();
+}
 function addModelRow(k,v){
   var d=document.createElement('div'); d.className='model-row';
   var ki=document.createElement('input'); ki.placeholder='OpenAI model (e.g. gpt-5.5)'; ki.value=k||'';
@@ -349,10 +400,16 @@ var _configCache = {};
 
 async function loadConfig(){
   try{
-    var r=await fetch('/config'), cfg=await r.json();
+    var r=await fetch('/config',{headers:authHeaders()});
+    if(r.status===401){
+      showTokenPrompt(t('需要认证令牌','Authentication required'));
+      return;
+    }
+    var cfg=await r.json();
     _configCache = cfg;
-    // 优先用 Claude Key，回退到 Codex Key
-    _adminToken = cfg.claude_deepseek_key || cfg.deepseek_key || '';
+    // 优先用 Claude Key，回退到 Codex Key；持久化到 localStorage
+    var newToken = cfg.claude_deepseek_key || cfg.deepseek_key || '';
+    if(newToken && newToken!=='sk-your-deepseek-api-key'){ _adminToken = newToken; localStorage.setItem(TOKEN_KEY, newToken); }
     document.getElementById('deepseek_key').value=cfg.deepseek_key||'';
     document.getElementById('deepseek_base').value=cfg.deepseek_base||'';
     document.getElementById('default_model').value=cfg.default_model||'';
@@ -425,7 +482,11 @@ async function saveConfig(){
   try{
     var h = Object.assign({'Content-Type':'application/json'}, authHeaders());
     var r=await fetch('/config',{method:'POST',headers:h,body:JSON.stringify(cfg)});
-    if(r.ok){ toast(t('已保存并生效','Saved & applied'),true); loadConfig(); }
+    if(r.ok){ toast(t('已保存并生效','Saved & applied'),true);
+      // 保存成功后同步 token 到 localStorage（优先 Claude Key，回退 Codex Key）
+      var savedToken = cfg.claude_deepseek_key || cfg.deepseek_key || '';
+      if(savedToken && savedToken!=='sk-your-deepseek-api-key'){ _adminToken = savedToken; localStorage.setItem(TOKEN_KEY, savedToken); }
+      loadConfig(); }
     else{ var e=await r.json(); toast(t('保存失败','Save failed')+': '+(e.detail||r.status),false); }
   }catch(e){ toast(t('保存失败','Save failed')+': '+e,false); }
 }
