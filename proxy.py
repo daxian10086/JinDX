@@ -90,6 +90,7 @@ app.post("/chat/completions")(chat_completions)
 app.post("/v1/responses")(responses_http)
 app.post("/responses")(responses_http)
 app.post("/backend-api/codex/responses")(responses_http)
+app.post("/v1/backend-api/codex/responses")(responses_http)
 
 # Compact endpoint
 app.post("/v1/responses/compact")(responses_compact)
@@ -99,6 +100,7 @@ app.post("/responses/compact")(responses_compact)
 app.websocket("/v1/responses")(_make_ws_endpoint)
 app.websocket("/responses")(_make_ws_endpoint)
 app.websocket("/backend-api/codex/responses")(_make_ws_endpoint)
+app.websocket("/v1/backend-api/codex/responses")(_make_ws_endpoint)
 
 # Models & health
 app.get("/v1/models")(list_models)
@@ -108,11 +110,15 @@ app.get("/health")(health)
 # Codex backend API
 app.get("/backend-api/codex/models")(codex_models)
 app.get("/backend-api/models")(codex_models)
+app.get("/v1/backend-api/codex/models")(codex_models)
 app.post("/backend-api/codex/analytics-events/events")(codex_analytics)
 app.post("/backend-api/analytics-events/events")(codex_analytics)
+app.post("/v1/backend-api/codex/analytics-events/events")(codex_analytics)
 app.get("/backend-api/plugins/featured")(codex_plugins)
 app.post("/backend-api/wham/apps")(codex_wham)
+app.post("/v1/backend-api/wham/apps")(codex_wham)
 app.api_route("/backend-api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])(codex_backend_fallback)
+app.api_route("/v1/backend-api/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])(codex_backend_fallback)
 
 # Claude Code — Anthropic Messages API
 app.post("/v1/messages")(claude_messages)
