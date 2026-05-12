@@ -180,17 +180,23 @@ async def _stream_responses_sse(body: dict):
 
 async def _stream_responses_sse_inner(body: dict):
     model = map_model(body.get("model", DEFAULT_MODEL))
-    chat_request = responses_to_chat(body)
-    chat_request["stream"] = True
-
     resp_id = _make_id("resp")
     msg_id = _make_id("msg")
     output_index = 0
     content_index = 0
-    started = False
+    started = True
     sent_text_parts = False
     usage = {}
     tool_calls_by_index: dict[int, dict] = {}
+
+    # 立即发送初始事件，防止长上下文/大推理场景下
+    # responses_to_chat() 和上游连接建立前 Codex 判定超时断连。
+    yield f"event: response.created\ndata: {sse_event('response.created', response={'id': resp_id, 'object': 'response', 'created_at': int(time.time()), 'status': 'in_progress', 'model': model, 'output': []})}\n\n"
+    yield f"event: response.in_progress\ndata: {sse_event('response.in_progress', response={'id': resp_id, 'object': 'response', 'status': 'in_progress', 'model': model})}\n\n"
+    yield f"event: response.output_item.added\ndata: {sse_event('response.output_item.added', output_index=output_index, item={'id': msg_id, 'type': 'message', 'role': 'assistant', 'status': 'in_progress', 'content': []})}\n\n"
+
+    chat_request = responses_to_chat(body)
+    chat_request["stream"] = True
 
     client = await get_http_client()
     try:
@@ -206,13 +212,6 @@ async def _stream_responses_sse_inner(body: dict):
                 err = json.dumps({"type": "error", "error": {"message": body_str, "code": upstream.status_code}})
                 yield f"data: {err}\n\n"
                 return
-
-            # 立即发送初始化事件，防止长上下文/大推理场景下
-            # 上游思考时间过长导致 Codex 判定超时断连。
-            started = True
-            yield f"event: response.created\ndata: {sse_event('response.created', response={'id': resp_id, 'object': 'response', 'created_at': int(time.time()), 'status': 'in_progress', 'model': model, 'output': []})}\n\n"
-            yield f"event: response.in_progress\ndata: {sse_event('response.in_progress', response={'id': resp_id, 'object': 'response', 'status': 'in_progress', 'model': model})}\n\n"
-            yield f"event: response.output_item.added\ndata: {sse_event('response.output_item.added', output_index=output_index, item={'id': msg_id, 'type': 'message', 'role': 'assistant', 'status': 'in_progress', 'content': []})}\n\n"
 
             content_buf = ""
             reasoning_buf = ""
@@ -324,6 +323,7 @@ async def _stream_responses_sse_inner(body: dict):
     except httpx.ReadError as e:
         record_error(500)
         logger.warning(f"SSE stream read error at eof (likely upstream closed early): {e}")
+        yield f"data: {json.dumps({'type': 'error', 'error': {'message': 'Upstream closed connection early', 'code': 500}})}\n\n"
         return
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         record_error(500)

@@ -397,6 +397,7 @@ async def _stream_anthropic_from_chat(chat_request: dict, session_id: str,
     except httpx.ReadError as e:
         record_error(500)
         logger.warning(f"Claude stream read error at eof (likely upstream closed early): {e}")
+        yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': {'type': 'api_error', 'message': 'Upstream closed connection early'}})}\n\n"
         return
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         record_error(500)

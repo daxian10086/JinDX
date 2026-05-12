@@ -188,7 +188,12 @@ def prefetch_urls_into_messages(messages: list) -> None:
     max_body = config.get("web_fetch_max_body", 80000)
 
     fetched: dict[str, str] = {}
+    start_time = time.time()
+    total_timeout = max(fetch_timeout * 2, 15)
     for url in urls[:max_urls]:
+        if time.time() - start_time > total_timeout:
+            logger.warning(f"Prefetch timeout after {total_timeout:.0f}s, processed {len(fetched)}/{min(len(urls), max_urls)} URLs")
+            break
         url, content = _fetch_url_sync(url, fetch_timeout, max_body)
         if content is not None:
             fetched[url] = content

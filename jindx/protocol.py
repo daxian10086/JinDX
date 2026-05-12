@@ -261,8 +261,12 @@ def map_model(name: str) -> str:
     return config.get("default_model", DEFAULT_MODEL)
 
 
-def responses_to_chat(data: dict) -> dict:
-    """将 OpenAI Responses API 请求体转换为 DeepSeek Chat Completions 格式。"""
+def responses_to_chat(data: dict, prefetch_urls: bool = True) -> dict:
+    """将 OpenAI Responses API 请求体转换为 DeepSeek Chat Completions 格式。
+
+    参数：
+        prefetch_urls: 是否同步预取 URL。streaming 路径应传 False 以在线程池中执行。
+    """
     messages = _extract_message_items(data)
 
     if not messages:
@@ -301,7 +305,7 @@ def responses_to_chat(data: dict) -> dict:
         logger.info("Injected tool-use enforcement prompt (first turn)")
 
     tools = data.get("tools") or []
-    if not has_history and has_urls_in_messages(messages):
+    if prefetch_urls and not has_history and has_urls_in_messages(messages):
         prefetch_urls_into_messages(messages)
         logger.info("Pre-fetched URLs into message context (first turn)")
 
