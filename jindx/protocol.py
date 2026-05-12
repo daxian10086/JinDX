@@ -363,6 +363,13 @@ def responses_to_chat(data: dict, prefetch_urls: bool = True) -> dict:
         chat["tools"] = converted
         chat["tool_choice"] = data.get("tool_choice", "auto")
 
+    # thinking 默认关闭，避免 reasoning_content 注入后 DeepSeek 要求
+    # 后续请求也带回 reasoning_content 导致 400 错误。
+    # 同时去掉 reasoning_effort，因为 thinking=disabled 与 reasoning_effort 冲突。
+    if "thinking" not in chat:
+        chat["thinking"] = {"type": "disabled"}
+        chat.pop("reasoning_effort", None)
+
     return chat
 
 
