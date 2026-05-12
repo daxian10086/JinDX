@@ -397,6 +397,7 @@ async def _stream_anthropic_from_chat(chat_request: dict, session_id: str,
     except httpx.ReadError as e:
         record_error(500)
         logger.warning(f"Claude stream read error at eof (likely upstream closed early): {e}")
+        return
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         record_error(500)
         yield _emit("error", {"type": "error",
@@ -405,6 +406,7 @@ async def _stream_anthropic_from_chat(chat_request: dict, session_id: str,
     except Exception as e:
         record_error(500)
         logger.exception(f"Claude stream unexpected error: {e}")
+        return
 
     # 异常收尾：确保即使中途出错也发送完整的结束事件
     if not started:
