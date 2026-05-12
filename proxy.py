@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 
-from jindx.config import config, PROXY_PORT, CONNECT_PORT, TLS_PORT, ADMIN_PORT
+from jindx.config import config, PROXY_PORT, CONNECT_PORT, TLS_PORT, ADMIN_PORT, write_codex_config_toml, write_claude_settings_json
 from jindx.tunnel import ensure_certs, _run_connect_server, CERT_FILE, KEY_FILE
 from jindx.admin import admin_app
 from jindx.stats import SensitiveDataFilter
@@ -137,6 +137,10 @@ if __name__ == "__main__":
 
     async def _serve_all():
         # 启动 Redis 健康检查后台任务
+        # 自动写入 Codex CLI 配置（脱敏）
+        write_codex_config_toml()
+        write_claude_settings_json()
+
         from jindx.cache import redis_health_check_loop, memory_cache_cleanup_loop
         asyncio.create_task(redis_health_check_loop())
         asyncio.create_task(memory_cache_cleanup_loop())

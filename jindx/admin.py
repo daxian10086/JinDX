@@ -104,6 +104,40 @@ async def admin_logs(limit: int = 50):
     return {"logs": stats_get_logs(limit)}
 
 
+@admin_app.get("/proxy-status")
+async def admin_proxy_status():
+    from .config import get_proxy_status
+    return JSONResponse(content=get_proxy_status())
+
+
+@admin_app.post("/proxy-status")
+async def admin_proxy_toggle(request: Request):
+    """切换 Codex / Claude 代理配置的启用/停用。"""
+    from .config import (
+        write_codex_config_toml, clear_codex_config_toml,
+        write_claude_settings_json, clear_claude_settings_json,
+        get_proxy_status,
+    )
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    if "codex" in body:
+        if body["codex"]:
+            write_codex_config_toml()
+        else:
+            clear_codex_config_toml()
+
+    if "claude" in body:
+        if body["claude"]:
+            write_claude_settings_json()
+        else:
+            clear_claude_settings_json()
+
+    return JSONResponse(content=get_proxy_status())
+
+
 # ══════════════════════════════════════════════════════════════════════
 # 内嵌管理面板 HTML（从原始 proxy.py 完整搬移）
 # ══════════════════════════════════════════════════════════════════════
@@ -285,6 +319,8 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
     </div>
   </div>
   <div class="card"><h2><span class="icon">&#128187;</span> <span data-i18n-zh="终端环境变量" data-i18n-en="Terminal Env">终端环境变量</span></h2>
+    <div class="row" style="margin-bottom:8px;"><label for="codex-proxy-toggle" data-i18n-zh="Codex 代理" data-i18n-en="Codex Proxy">Codex 代理</label><input id="codex-proxy-toggle" type="checkbox" onchange="toggleProxy('codex', this.checked)"></div>
+    <div class="row" style="margin-bottom:10px;"><label for="claude-proxy-toggle" data-i18n-zh="Claude 代理" data-i18n-en="Claude Proxy">Claude 代理</label><input id="claude-proxy-toggle" type="checkbox" onchange="toggleProxy('claude', this.checked)"></div>
     <div style="margin-bottom:10px;">
       <button class="btn btn-copy" onclick="copyEnv('codex')" data-i18n-zh="复制 Codex CLI" data-i18n-en="Copy Codex CLI">复制 Codex CLI</button>
       <button class="btn btn-copy" onclick="copyEnv('claude')" data-i18n-zh="复制 Claude Code" data-i18n-en="Copy Claude Code">复制 Claude Code</button>
@@ -491,6 +527,37 @@ async function saveConfig(){
   }catch(e){ toast(t('保存失败','Save failed')+': '+e,false); }
 }
 
+// ── 代理开关 ──
+
+async function loadProxyStatus(){
+  try {
+    var r = await fetch('/proxy-status', {headers: authHeaders()});
+    if (r.ok) {
+      var s = await r.json();
+      document.getElementById('codex-proxy-toggle').checked = !!s.codex_enabled;
+      document.getElementById('claude-proxy-toggle').checked = !!s.claude_enabled;
+    }
+  } catch(e) { console.error('loadProxyStatus', e); }
+}
+
+async function toggleProxy(which, enabled){
+  var body = {};
+  body[which] = enabled;
+  try {
+    var r = await fetch('/proxy-status', {
+      method: 'POST',
+      headers: Object.assign({'Content-Type': 'application/json'}, authHeaders()),
+      body: JSON.stringify(body)
+    });
+    if (r.ok) {
+      var name = which === 'codex' ? 'Codex' : 'Claude';
+      toast(name + (enabled ? t(' 代理已启用',' proxy enabled') : t(' 代理已停用',' proxy disabled')), true);
+    } else {
+      toast(t('操作失败','Operation failed'), false);
+    }
+  } catch(e) { toast(t('操作失败','Operation failed')+': '+e, false); }
+}
+
 // ── 环境变量复制 ──
 
 function updateEnvDisplay(){
@@ -602,7 +669,7 @@ async function checkStatus(){
   }
 }
 function init(){
-  applyLang(); loadConfig(); refreshStats(); refreshSessions(); refreshLogs(); checkStatus();
+  applyLang(); loadConfig(); refreshStats(); refreshSessions(); refreshLogs(); checkStatus(); loadProxyStatus();
   setInterval(refreshStats,5000); setInterval(refreshSessions,30000); setInterval(refreshLogs,15000); setInterval(checkStatus,30000);
 }
 init();

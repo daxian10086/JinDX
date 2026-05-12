@@ -173,3 +173,144 @@ class RuntimeConfig:
 # ── 全局单例 ─────────────────────────────────────────────────────────
 
 config = RuntimeConfig()
+
+
+# ── Codex 配置自动生成 ──────────────────────────────────────────────
+# 启动时将 jindx 运行时配置写入 ~/.codex/config.toml，
+# 确保 Codex CLI 始终连接到本地代理。API Key 不写入明文，
+# 由 Codex 通过 OPENAI_API_KEY 环境变量注入，实现自动脱敏。
+
+CODEX_CONFIG_TOML = """\
+# 此文件由 JinDx Proxy 启动时自动生成，请勿手动编辑。
+# 如需修改模型或参数，请通过管理面板 http://127.0.0.1:{admin_port} 操作。
+
+model = "gpt-5.5"
+model_reasoning_effort = "xhigh"
+model_provider = "openai_http"
+
+[model_providers.openai_http]
+name = "JinDx Proxy (DeepSeek)"
+wire_api = "responses"
+requires_openai_auth = false
+supports_websockets = true
+base_url = "http://127.0.0.1:{proxy_port}"
+
+[projects."/home/{user}"]
+trust_level = "trusted"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+
+[features]
+terminal_resize_reflow = true
+"""
+
+
+def write_codex_config_toml() -> None:
+    """在代理启动时写入/更新 Codex CLI 配置文件（脱敏）。
+
+    API Key 不在 config.toml 中写入，而是由 Codex 通过
+    OPENAI_API_KEY 环境变量读取。用户需要在启动 Codex 前设置：
+        export OPENAI_BASE_URL="http://127.0.0.1:{proxy_port}"
+        export OPENAI_API_KEY="$DEEPSEEK_KEY"
+    """
+    import getpass
+
+    target_dir = Path.home() / ".codex"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    user = os.environ.get("USER") or getpass.getuser()
+    content = CODEX_CONFIG_TOML.format(
+        admin_port=ADMIN_PORT,
+        proxy_port=PROXY_PORT,
+        user=user,
+    )
+    (target_dir / "config.toml").write_text(content)
+    logger.info(f"Codex config written to {target_dir / 'config.toml'} (key: via OPENAI_API_KEY env)")
+
+
+# ── Claude Code 配置自动生成 ────────────────────────────────────────
+# 启动时将 jindx 运行时配置写入 ~/.claude/settings.json，
+# 确保 Claude Code 始终连接到本地代理。Auth Token 用占位符，
+# 实际 API Key 由 ANTHROPIC_API_KEY 环境变量注入，实现自动脱敏。
+
+def write_claude_settings_json() -> None:
+    """在代理启动时写入/更新 Claude Code settings.json（脱敏）。
+
+    Auth token 使用占位符，Claude Code 通过 ANTHROPIC_API_KEY
+    环境变量读取实际的 API Key。用户无需手动设置 settings.json。
+    """
+    target_dir = Path.home() / ".claude"
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    settings = {
+        "env": {
+            "ANTHROPIC_AUTH_TOKEN": "proxy-placeholder",
+            "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{PROXY_PORT}",
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL": config.get("default_model", DEFAULT_MODEL),
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": config.get("default_model", DEFAULT_MODEL),
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": config.get("default_model", DEFAULT_MODEL),
+            "ANTHROPIC_MODEL": config.get("default_model", DEFAULT_MODEL),
+        },
+        "model": "sonnet",
+        "skipDangerousModePermissionPrompt": config.get("claude_skip_dangerous_mode", True),
+        "theme": "auto",
+    }
+
+    settings_path = target_dir / "settings.json"
+    settings_path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+    logger.info(
+        f"Claude settings written to {settings_path} "
+        f"(auth: via ANTHROPIC_API_KEY env, model: {settings['env']['ANTHROPIC_MODEL']})"
+    )
+
+
+# ── 配置清除 & 状态查询 ─────────────────────────────────────────────
+
+def clear_codex_config_toml() -> None:
+    """删除 Codex CLI 配置文件，停用 Codex 代理写入。"""
+    target = Path.home() / ".codex" / "config.toml"
+    if target.exists():
+        target.unlink()
+        logger.info(f"Codex config removed: {target}")
+
+
+def clear_claude_settings_json() -> None:
+    """移除 Claude Code settings.json 中的代理配置，保留其他用户设置。
+
+    只清除 env 块中的代理相关字段，不覆盖用户的 tipsHistory、
+    projects 等个性化数据。"""
+    target = Path.home() / ".claude" / "settings.json"
+    if target.exists():
+        try:
+            data = json.loads(target.read_text())
+        except (json.JSONDecodeError, OSError):
+            data = {}
+        data.pop("env", None)
+        data.setdefault("model", "sonnet")
+        data.setdefault("theme", "auto")
+    else:
+        data = {"model": "sonnet", "theme": "auto"}
+    target.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    logger.info(f"Claude proxy config removed from {target}")
+
+
+def get_proxy_status() -> dict:
+    """查询代理配置文件状态，供管理面板开关使用。
+
+    返回 codex_enabled 和 claude_enabled 两个布尔值。
+    """
+    codex_config = Path.home() / ".codex" / "config.toml"
+    codex_enabled = codex_config.exists()
+
+    claude_settings = Path.home() / ".claude" / "settings.json"
+    claude_enabled = False
+    if claude_settings.exists():
+        try:
+            data = json.loads(claude_settings.read_text())
+            env = data.get("env", {})
+            claude_enabled = env.get("ANTHROPIC_BASE_URL", "").startswith("http://127.0.0.1")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return {"codex_enabled": codex_enabled, "claude_enabled": claude_enabled}
