@@ -40,7 +40,7 @@ def _connect_redis() -> Optional[redis.Redis]:
         logger.info(f"Redis connected at {REDIS_HOST}:{REDIS_PORT}")
         return r
     except (redis.ConnectionError, redis.TimeoutError, OSError) as e:
-        logger.warning(f"Redis unavailable ({e}), falling back to in-memory cache")
+        logger.debug(f"Redis unavailable ({e}), falling back to in-memory cache")
         return None
 
 

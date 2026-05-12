@@ -253,6 +253,20 @@ if ($LASTEXITCODE -ne 0) {
 $codexConfigDir = "$env:USERPROFILE\.codex"
 $codexConfigFile = "$codexConfigDir\config.toml"
 
+# 构建跨平台 projects 信任段
+$homePath = $env:USERPROFILE -replace '\\', '/'
+$projectsSection = @"
+
+[projects."$homePath"]
+trust_level = "trusted"
+
+[projects."C:/"]
+trust_level = "trusted"
+
+[projects."D:/"]
+trust_level = "trusted"
+"@
+
 $codexConfigContent = @"
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
@@ -261,9 +275,16 @@ model_provider = "openai_http"
 [model_providers.openai_http]
 name = "JinDx Proxy (DeepSeek)"
 wire_api = "responses"
-requires_openai_auth = true
+requires_openai_auth = false
 supports_websockets = true
 base_url = "http://127.0.0.1:$env:PROXY_PORT"
+$projectsSection
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+
+[features]
+terminal_resize_reflow = true
 "@
 
 $needsUpdate = $false

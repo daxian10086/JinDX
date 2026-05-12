@@ -125,13 +125,13 @@ async def admin_proxy_toggle(request: Request):
 
     if "codex" in body:
         if body["codex"]:
-            write_codex_config_toml()
+            write_codex_config_toml(force=True)
         else:
             clear_codex_config_toml()
 
     if "claude" in body:
         if body["claude"]:
-            write_claude_settings_json()
+            write_claude_settings_json(force=True)
         else:
             clear_claude_settings_json()
 

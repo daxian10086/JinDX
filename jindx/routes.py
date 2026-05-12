@@ -50,11 +50,37 @@ def _get_auth_headers() -> dict:
     }
 
 
+def _get_client_auth_headers(request: Request) -> dict:
+    """透传请求头：优先用客户端自带的 API Key，没有则用代理的 Key。"""
+    headers = {"Content-Type": "application/json"}
+    client_auth = request.headers.get("Authorization", "")
+    if client_auth:
+        headers["Authorization"] = client_auth
+    else:
+        headers["Authorization"] = f"Bearer {config.get('deepseek_key', '')}"
+    return headers
+
+
 def _get_upstream() -> str:
     return f"{config.get('deepseek_base', 'https://api.deepseek.com')}/v1/chat/completions"
 
 
-# ── Chat Completions 透传 ──────────────────────────────────────────
+def _maybe_map_model(name: str) -> str:
+    """仅映射已知的非 DeepSeek 模型名（如 gpt-*），DeepSeek 原生名不变。"""
+    if not name:
+        return config.get("default_model", DEFAULT_MODEL)
+    low = name.lower()
+    if "deepseek" in low:
+        return name  # DeepSeek 原生模型，不做替换
+    mapping = config.get("model_mapping", {})
+    if name in mapping:
+        return mapping[name]
+    if low in mapping:
+        return mapping[low]
+    return name  # 未知模型，保留原样
+
+
+# ── Chat Completions 透传（透明通道，不做协议翻译）──────────────────
 
 async def chat_completions(request: Request):
     record_request()
@@ -63,20 +89,20 @@ async def chat_completions(request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-    body["model"] = map_model(body.get("model", ""))
-
+    body["model"] = _maybe_map_model(body.get("model", ""))
+    auth_headers = _get_client_auth_headers(request)
     stream = body.get("stream", False)
 
     if stream:
         return StreamingResponse(
-            _stream_chat(body),
+            _stream_chat(body, auth_headers),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
     client = await get_http_client()
     try:
-        resp = await client.post(_get_upstream(), json=body, headers=_get_auth_headers())
+        resp = await client.post(_get_upstream(), json=body, headers=auth_headers)
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="Upstream timeout")
     except httpx.ConnectError as e:
@@ -87,11 +113,11 @@ async def chat_completions(request: Request):
     return JSONResponse(content=resp.json())
 
 
-async def _stream_chat(body: dict):
-    body["model"] = map_model(body.get("model", ""))
+async def _stream_chat(body: dict, auth_headers: dict):
+    body["model"] = _maybe_map_model(body.get("model", ""))
     client = await get_http_client()
     try:
-        async with client.stream("POST", _get_upstream(), json=body, headers=_get_auth_headers()) as resp:
+        async with client.stream("POST", _get_upstream(), json=body, headers=auth_headers) as resp:
             if resp.status_code != 200:
                 body_text = await resp.aread()
                 body_str = body_text.decode()[:2000]

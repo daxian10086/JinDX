@@ -114,7 +114,12 @@ class RuntimeConfig:
         cfg = dict(_DEFAULT_CONFIG)
         try:
             if CONFIG_FILE.exists():
-                saved = json.loads(CONFIG_FILE.read_text())
+                raw = CONFIG_FILE.read_bytes()
+                try:
+                    text = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    text = raw.decode("gbk")
+                saved = json.loads(text)
                 cfg.update(saved)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to load config: {e}")
@@ -124,7 +129,7 @@ class RuntimeConfig:
         """持久化当前配置到文件。"""
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            CONFIG_FILE.write_text(json.dumps(self._config, indent=2, ensure_ascii=False))
+            CONFIG_FILE.write_text(json.dumps(self._config, indent=2, ensure_ascii=False), encoding="utf-8")
         except OSError as e:
             logger.error(f"Failed to save config: {e}")
 
@@ -195,8 +200,7 @@ requires_openai_auth = false
 supports_websockets = true
 base_url = "http://127.0.0.1:{proxy_port}"
 
-[projects."/home/{user}"]
-trust_level = "trusted"
+{projects_section}
 
 [tui.model_availability_nux]
 "gpt-5.5" = 4
@@ -206,27 +210,41 @@ terminal_resize_reflow = true
 """
 
 
-def write_codex_config_toml() -> None:
-    """在代理启动时写入/更新 Codex CLI 配置文件（脱敏）。
+def write_codex_config_toml(*, force: bool = False) -> None:
+    """在代理首次启动时写入 Codex CLI 配置文件（脱敏）。
+
+    默认仅当 ~/.codex/config.toml 不存在时才写入（首次初始化），
+    已有配置则跳过，避免覆盖用户手动修改或 Codex 自动追加的字段。
+
+    设置 force=True 时强制重新写入（用于管理面板手动启用）。
 
     API Key 不在 config.toml 中写入，而是由 Codex 通过
-    OPENAI_API_KEY 环境变量读取。用户需要在启动 Codex 前设置：
-        export OPENAI_BASE_URL="http://127.0.0.1:{proxy_port}"
-        export OPENAI_API_KEY="$DEEPSEEK_KEY"
+    OPENAI_API_KEY 环境变量读取。
     """
-    import getpass
-
     target_dir = Path.home() / ".codex"
     target_dir.mkdir(parents=True, exist_ok=True)
+    target_file = target_dir / "config.toml"
 
-    user = os.environ.get("USER") or getpass.getuser()
+    # 非强制模式：文件已存在则跳过
+    if not force and target_file.exists():
+        logger.debug(f"Codex config already exists, skip writing: {target_file}")
+        return
+
+    # 构建代理需要的核心配置
+    home_path = str(Path.home()).replace("\\", "/")
+    projects_section = f'[projects."{home_path}"]\ntrust_level = "trusted"'
+    if os.name == "nt":
+        projects_section += '\n\n[projects."C:/"]\ntrust_level = "trusted"'
+        projects_section += '\n\n[projects."D:/"]\ntrust_level = "trusted"'
+
     content = CODEX_CONFIG_TOML.format(
         admin_port=ADMIN_PORT,
         proxy_port=PROXY_PORT,
-        user=user,
+        projects_section=projects_section,
     )
-    (target_dir / "config.toml").write_text(content)
-    logger.info(f"Codex config written to {target_dir / 'config.toml'} (key: via OPENAI_API_KEY env)")
+
+    target_file.write_text(content, encoding="utf-8")
+    logger.info(f"Codex config initialized at {target_file} (key: via OPENAI_API_KEY env)")
 
 
 # ── Claude Code 配置自动生成 ────────────────────────────────────────
@@ -234,14 +252,25 @@ def write_codex_config_toml() -> None:
 # 确保 Claude Code 始终连接到本地代理。Auth Token 用占位符，
 # 实际 API Key 由 ANTHROPIC_API_KEY 环境变量注入，实现自动脱敏。
 
-def write_claude_settings_json() -> None:
-    """在代理启动时写入/更新 Claude Code settings.json（脱敏）。
+def write_claude_settings_json(*, force: bool = False) -> None:
+    """在代理首次启动时写入 Claude Code settings.json（脱敏）。
+
+    默认仅当 ~/.claude/settings.json 不存在时才写入（首次初始化），
+    已有配置则跳过，避免覆盖用户自定义的 settings。
+
+    设置 force=True 时强制重新写入（用于管理面板手动启用）。
 
     Auth token 使用占位符，Claude Code 通过 ANTHROPIC_API_KEY
     环境变量读取实际的 API Key。用户无需手动设置 settings.json。
     """
     target_dir = Path.home() / ".claude"
     target_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = target_dir / "settings.json"
+
+    # 非强制模式：文件已存在则跳过
+    if not force and settings_path.exists():
+        logger.debug(f"Claude settings already exists, skip writing: {settings_path}")
+        return
 
     settings = {
         "env": {
@@ -257,10 +286,9 @@ def write_claude_settings_json() -> None:
         "theme": "auto",
     }
 
-    settings_path = target_dir / "settings.json"
     settings_path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
     logger.info(
-        f"Claude settings written to {settings_path} "
+        f"Claude settings {'re-' if force and settings_path.exists() else ''}written to {settings_path} "
         f"(auth: via ANTHROPIC_API_KEY env, model: {settings['env']['ANTHROPIC_MODEL']})"
     )
 
