@@ -171,6 +171,9 @@ async def _stream_responses_sse(body: dict):
     try:
         async for event in _stream_responses_sse_inner(body):
             yield event
+    except Exception as e:
+        logger.exception(f"SSE stream unhandled error: {e}")
+        yield f"data: {json.dumps({'type': 'error', 'error': {'message': str(e)}})}\n\n"
     finally:
         decrement_active_streams()
 
@@ -204,6 +207,13 @@ async def _stream_responses_sse_inner(body: dict):
                 yield f"data: {err}\n\n"
                 return
 
+            # 立即发送初始化事件，防止长上下文/大推理场景下
+            # 上游思考时间过长导致 Codex 判定超时断连。
+            started = True
+            yield f"event: response.created\ndata: {sse_event('response.created', response={'id': resp_id, 'object': 'response', 'created_at': int(time.time()), 'status': 'in_progress', 'model': model, 'output': []})}\n\n"
+            yield f"event: response.in_progress\ndata: {sse_event('response.in_progress', response={'id': resp_id, 'object': 'response', 'status': 'in_progress', 'model': model})}\n\n"
+            yield f"event: response.output_item.added\ndata: {sse_event('response.output_item.added', output_index=output_index, item={'id': msg_id, 'type': 'message', 'role': 'assistant', 'status': 'in_progress', 'content': []})}\n\n"
+
             content_buf = ""
             reasoning_buf = ""
 
@@ -228,12 +238,6 @@ async def _stream_responses_sse_inner(body: dict):
 
                 if delta.get("usage"):
                     usage = delta["usage"]
-
-                if not started:
-                    started = True
-                    yield f"event: response.created\ndata: {sse_event('response.created', response={'id': resp_id, 'object': 'response', 'created_at': delta.get('created', int(time.time())), 'status': 'in_progress', 'model': model, 'output': []})}\n\n"
-                    yield f"event: response.in_progress\ndata: {sse_event('response.in_progress', response={'id': resp_id, 'object': 'response', 'status': 'in_progress', 'model': model})}\n\n"
-                    yield f"event: response.output_item.added\ndata: {sse_event('response.output_item.added', output_index=output_index, item={'id': msg_id, 'type': 'message', 'role': 'assistant', 'status': 'in_progress', 'content': []})}\n\n"
 
                 if reasoning_delta:
                     if not reasoning_buf and not content_buf:
@@ -313,11 +317,56 @@ async def _stream_responses_sse_inner(body: dict):
 
             if reasoning_buf:
                 cache_reasoning("codex", get_session_id(body), reasoning_buf)
+            return
 
+    except GeneratorExit:
+        raise
+    except httpx.ReadError as e:
+        record_error(500)
+        logger.warning(f"SSE stream read error at eof (likely upstream closed early): {e}")
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         record_error(500)
         log_error(f"SSE stream error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'error': {'message': str(e)}})}\n\n"
+        return
+    except Exception as e:
+        record_error(500)
+        logger.exception(f"SSE stream unexpected error: {e}")
+
+    # 异常收尾：确保即使中途出错也发送完整的结束事件
+    if not started:
+        yield f"event: response.created\ndata: {sse_event('response.created', response={'id': resp_id, 'object': 'response', 'created_at': int(time.time()), 'status': 'in_progress', 'model': model, 'output': []})}\n\n"
+        yield f"event: response.in_progress\ndata: {sse_event('response.in_progress', response={'id': resp_id, 'object': 'response', 'status': 'in_progress', 'model': model})}\n\n"
+        yield f"event: response.output_item.added\ndata: {sse_event('response.output_item.added', output_index=output_index, item={'id': msg_id, 'type': 'message', 'role': 'assistant', 'status': 'in_progress', 'content': []})}\n\n"
+
+    final_content = []
+    display_text = content_buf or reasoning_buf
+    if display_text:
+        final_content.append({"type": "output_text", "text": display_text, "annotations": []})
+
+    if sent_text_parts:
+        yield f"event: response.content_part.done\ndata: {sse_event('response.content_part.done', item_id=msg_id, output_index=output_index, content_index=content_index, part={'type': 'output_text' if content_buf else 'reasoning_text', 'text': display_text})}\n\n"
+
+    yield f"event: response.output_item.done\ndata: {sse_event('response.output_item.done', output_index=output_index, item={'id': msg_id, 'type': 'message', 'role': 'assistant', 'status': 'completed', 'content': final_content})}\n\n"
+
+    all_output_items = [
+        {"id": msg_id, "type": "message", "role": "assistant", "status": "completed", "content": final_content}
+    ]
+    for tc_idx in sorted(tool_calls_by_index.keys()):
+        tc = tool_calls_by_index[tc_idx]
+        tc_id = tc["id"] or _make_id("call")
+        tc_out_idx = output_index + tc_idx + 1
+        yield f"event: response.output_item.added\ndata: {sse_event('response.output_item.added', output_index=tc_out_idx, item={'id': tc_id, 'type': 'function_call', 'name': tc.get('name', ''), 'call_id': tc_id, 'status': 'completed', 'arguments': tc.get('arguments', '{}')})}\n\n"
+        all_output_items.append({
+            "id": tc_id, "type": "function_call", "call_id": tc_id,
+            "name": tc.get("name", ""), "arguments": tc.get("arguments", "{}"), "status": "completed",
+        })
+
+    yield f"event: response.completed\ndata: {sse_event('response.completed', response={'id': resp_id, 'object': 'response', 'created_at': int(time.time()), 'status': 'completed', 'model': model, 'output': all_output_items, 'output_text': display_text, 'usage': {'input_tokens': usage.get('prompt_tokens', 0), 'output_tokens': usage.get('completion_tokens', 0), 'total_tokens': usage.get('total_tokens', 0)}})}\n\n"
+    yield "data: [DONE]\n\n"
+
+    if reasoning_buf:
+        cache_reasoning("codex", get_session_id(body), reasoning_buf)
 
 
 # ── WebSocket 处理 ─────────────────────────────────────────────────
@@ -379,11 +428,10 @@ async def _process_ws_request(ws: WebSocket, body: dict):
     output_index = 0
     content_index = 0
 
-    chat_request = responses_to_chat(body)
-    chat_request["stream"] = True
-
     # 在等待上游响应之前立即发送初始事件，防止长上下文场景下
-    # DeepSeek 长时间无响应导致 WebSocket 被判定为断连。
+    # WebSocket 静默时间过长被 Codex 判定为断连。
+    # 必须放在 responses_to_chat() 之前，因为该函数涉及 URL 预取、
+    # 消息重排等阻塞操作，大上下文下可能耗时 200ms+。
     await ws.send_json({
         "type": "response.created",
         "response": {
@@ -401,6 +449,9 @@ async def _process_ws_request(ws: WebSocket, body: dict):
         "output_index": output_index,
         "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}
     })
+
+    chat_request = responses_to_chat(body)
+    chat_request["stream"] = True
 
     started = True
     sent_text_parts = False
