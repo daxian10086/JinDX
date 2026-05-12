@@ -141,8 +141,7 @@ if __name__ == "__main__":
         write_codex_config_toml()
         write_claude_settings_json()
 
-        from jindx.cache import redis_health_check_loop, memory_cache_cleanup_loop
-        asyncio.create_task(redis_health_check_loop())
+        from jindx.cache import memory_cache_cleanup_loop
         asyncio.create_task(memory_cache_cleanup_loop())
 
         connect_task = asyncio.create_task(_run_connect_server())

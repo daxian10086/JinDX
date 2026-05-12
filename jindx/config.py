@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import logging
 from pathlib import Path
 from threading import Lock
@@ -51,17 +52,13 @@ TOOL_USE_ENFORCEMENT = os.environ.get(
 CONFIG_FILE = Path(_default_config_path())
 
 
-# ── Redis 配置 ─────────────────────────────────────────────────────────
-
-REDIS_HOST = os.environ.get("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
-REDIS_DB = int(os.environ.get("REDIS_DB", "0"))
-REDIS_KEY_PREFIX = "reasoning:"
-
-
 # ── TLS 证书路径 ───────────────────────────────────────────────────────
 
-CERT_DIR = Path(__file__).parent.parent / "certs"
+# 打包为 exe (PyInstaller) 时，证书目录放在 exe 同目录下以保证可写
+if getattr(sys, 'frozen', False):
+    CERT_DIR = Path(sys.executable).parent / "certs"
+else:
+    CERT_DIR = Path(__file__).parent.parent / "certs"
 CERT_FILE = CERT_DIR / "tls.crt"
 KEY_FILE = CERT_DIR / "tls.key"
 

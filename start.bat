@@ -25,9 +25,6 @@ if not defined DEEPSEEK_BASE set DEEPSEEK_BASE=https://api.deepseek.com
 if not defined DEFAULT_MODEL set DEFAULT_MODEL=deepseek-v4-pro
 if not defined DEFAULT_REASONING_EFFORT set DEFAULT_REASONING_EFFORT=max
 if not defined MAX_POSITION_EMBEDDINGS set MAX_POSITION_EMBEDDINGS=1000000
-if not defined REDIS_HOST set REDIS_HOST=127.0.0.1
-if not defined REDIS_PORT set REDIS_PORT=6379
-if not defined REDIS_DB set REDIS_DB=0
 if not defined CONNECT_PORT set CONNECT_PORT=8443
 if not defined TLS_PORT set TLS_PORT=8444
 
@@ -89,13 +86,13 @@ echo.
 
 REM ── 安装 Python 依赖 ────────────────────────────
 
-python -c "import fastapi,uvicorn,httpx,redis,cryptography" 2>NUL
+python -c "import fastapi,uvicorn,httpx,cryptography" 2>NUL
 if errorlevel 1 (
     echo  [*] 安装 Python 依赖...
-    pip install -q fastapi "uvicorn[standard]" httpx redis cryptography 2>NUL
+    pip install -q fastapi "uvicorn[standard]" httpx cryptography 2>NUL
     if errorlevel 1 (
         echo  [*] 默认 PyPI 不可用，切换到清华镜像...
-        pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" httpx redis cryptography
+        pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" httpx cryptography
     )
 )
 

@@ -67,18 +67,18 @@ if ! apt-get update -qq 2>/dev/null; then
     apt-get update -qq || err "apt 镜像源也不可用，请检查网络"
 fi
 
-apt-get install -y -qq python3 python3-pip python3-venv redis-server openssl \
+apt-get install -y -qq python3 python3-pip python3-venv openssl \
     iptables netfilter-persistent 2>&1 | tail -5
 
 # ── 安装 Python 依赖 ─────────────────────────────────
 log "安装 Python 依赖..."
 
 # pip 镜像回退：默认源不可用则切到清华镜像
-pip3 install --break-system-packages -q fastapi "uvicorn[standard]" httpx redis cryptography 2>/dev/null || {
+pip3 install --break-system-packages -q fastapi "uvicorn[standard]" httpx cryptography 2>/dev/null || {
     warn "默认 PyPI 不可用，切换到清华镜像..."
     pip3 install --break-system-packages -q \
         -i https://pypi.tuna.tsinghua.edu.cn/simple \
-        fastapi "uvicorn[standard]" httpx redis cryptography
+        fastapi "uvicorn[standard]" httpx cryptography
 }
 
 # ── 创建目录 ─────────────────────────────────────────
@@ -131,8 +131,8 @@ log "创建 systemd 服务..."
 cat > /etc/systemd/system/jindx.service << SERVICE_EOF
 [Unit]
 Description=JinDX Chat-Responses API Proxy
-After=network-online.target redis-server.service
-Wants=network-online.target redis-server.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -143,9 +143,6 @@ Environment="DEEPSEEK_KEY=${DEEPSEEK_KEY}"
 Environment="DEFAULT_MODEL=${DEFAULT_MODEL}"
 Environment="PROXY_PORT=${PROXY_PORT}"
 Environment="ADMIN_PORT=${ADMIN_PORT}"
-Environment="REDIS_HOST=127.0.0.1"
-Environment="REDIS_PORT=6379"
-Environment="REDIS_DB=0"
 Environment="CONNECT_PORT=8443"
 Environment="TLS_PORT=8444"
 Environment="DEFAULT_REASONING_EFFORT=max"
@@ -162,8 +159,6 @@ SERVICE_EOF
 # ── 启动服务 ─────────────────────────────────────────
 log "启动服务..."
 systemctl daemon-reload
-systemctl enable redis-server 2>/dev/null || true
-systemctl restart redis-server 2>/dev/null || true
 systemctl enable jindx
 systemctl restart jindx
 

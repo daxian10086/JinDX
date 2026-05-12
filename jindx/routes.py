@@ -664,7 +664,6 @@ async def list_models():
 
 
 async def health():
-    from .cache import get_redis_info, is_redis_available
     try:
         client = await get_http_client()
         r = await client.get(f"{config.get('deepseek_base', 'https://api.deepseek.com')}/v1/models", headers=_get_auth_headers())
@@ -677,8 +676,7 @@ async def health():
         "target": _get_upstream(),
         "upstream": upstream,
         "cache": {
-            "backend": "redis" if is_redis_available() else "memory",
-            "redis": get_redis_info(),
+            "backend": "file",
         },
     }
 

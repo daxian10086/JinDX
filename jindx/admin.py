@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from .config import config, DEEPSEEK_BASE, PROXY_PORT, ADMIN_PORT, TLS_PORT, CONNECT_PORT
 from .routes import get_http_client
 from .stats import get_stats as stats_get_stats, get_logs as stats_get_logs
-from .cache import get_memory_sessions_count, get_redis_session_count, is_redis_available, get_redis_info
+from .cache import get_memory_sessions_count
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ async def admin_health():
     return {
         "status": "ok",
         "deepseek": "connected" if ds_ok else "unreachable",
-        "redis": "connected" if is_redis_available() else "unavailable",
+        "redis": "connected",  # 兼容前端，始终 connected
     }
 
 
@@ -95,13 +95,31 @@ async def admin_stats():
 async def admin_sessions():
     return {
         "memory_sessions": get_memory_sessions_count(),
-        "redis_sessions": get_redis_session_count(),
+        "redis_sessions": 0,
     }
 
 
 @admin_app.get("/logs")
 async def admin_logs(limit: int = 50):
     return {"logs": stats_get_logs(limit)}
+
+
+@admin_app.get("/cache-info")
+async def admin_cache_info():
+    from .cache import get_cache_size_info
+    return {"cache": get_cache_size_info()}
+
+
+@admin_app.post("/cache-clear")
+async def admin_cache_clear(request: Request):
+    from .cache import clear_cache
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        body = {}
+    source = body.get("source", "")
+    deleted = clear_cache(source)
+    return {"status": "ok", "deleted": deleted}
 
 
 @admin_app.get("/proxy-status")
@@ -149,7 +167,7 @@ _ADMIN_HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JinDX</title>
 <style>
-:root { --bg: #0d1117; --fg: #c9d1d9; --border: #30363d; --accent: #58a6ff; --danger: #f85149; --green: #3fb950; --orange: #d2991d; --input-bg: #161b22; --card: #161b22; --muted: #8b949e; }
+:root { --bg: #f6f8fa; --fg: #1f2328; --border: #d0d7de; --accent: #0969da; --danger: #cf222e; --green: #1a7f37; --orange: #bc4c00; --input-bg: #ffffff; --card: #ffffff; --muted: #656d76; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--fg); min-height: 100vh; }
 #topbar { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--card); position: sticky; top: 0; z-index: 10; }
@@ -185,8 +203,8 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 .row label { min-width: 150px; font-weight: 500; font-size: 13px; }
 .row input, .row select, .row textarea { flex: 1; min-width: 180px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; color: var(--fg); padding: 6px 10px; font-size: 13px; }
 .row textarea { min-height: 56px; font-family: monospace; }
-.row input[type="checkbox"] { flex: 0; min-width: 40px; width: 40px; height: 22px; appearance: none; -webkit-appearance: none; background: #30363d; border: 1px solid var(--border); border-radius: 11px; cursor: pointer; position: relative; transition: background 0.2s; }
-.row input[type="checkbox"]::after { content: ''; position: absolute; top: 1px; left: 1px; width: 18px; height: 18px; border-radius: 50%; background: #8b949e; transition: all 0.2s; }
+.row input[type="checkbox"] { flex: 0; min-width: 40px; width: 40px; height: 22px; appearance: none; -webkit-appearance: none; background: #d0d7de; border: 1px solid var(--border); border-radius: 11px; cursor: pointer; position: relative; transition: background 0.2s; }
+.row input[type="checkbox"]::after { content: ''; position: absolute; top: 1px; left: 1px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.15); transition: all 0.2s; }
 .row input[type="checkbox"]:checked { background: #238636; border-color: #238636; }
 .row input[type="checkbox"]:checked::after { left: 19px; background: #fff; }
 .row input:focus, .row select:focus, .row textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,0.2); }
@@ -196,7 +214,7 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 .btn-primary { background: #238636; color: #fff; border-color: #238636; }
 .btn-primary:hover { background: #2ea043; }
 .btn-secondary { background: var(--input-bg); color: var(--fg); }
-.btn-secondary:hover { background: #30363d; }
+.btn-secondary:hover { background: #e9ecef; }
 .btn-copy { background: #1f6feb; color: #fff; border-color: #1f6feb; font-size: 11px; padding: 4px 10px; }
 .btn-copy:hover { background: #388bfd; }
 .model-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
@@ -208,7 +226,7 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 #toast.ok { background: #238636; color: #fff; }
 #toast.err { background: var(--danger); color: #fff; }
 .section-toggle { cursor: pointer; user-select: none; }
-.section-toggle:hover { color: #fff; }
+.section-toggle:hover { color: #000; }
 .section-body { display: block; }
 .section-body.collapsed { display: none; }
 .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
@@ -255,8 +273,6 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
     <div class="row"><label data-i18n-zh="推理强度" data-i18n-en="Reasoning Effort">推理强度</label><select id="reasoning_effort"><option value="" data-i18n-zh="(由 DeepSeek 决定)" data-i18n-en="(let DeepSeek decide)">(由 DeepSeek 决定)</option><option value="min">min</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select></div>
     <div class="row"><label data-i18n-zh="上下文窗口" data-i18n-en="Context Window">上下文窗口</label><input id="max_position_embeddings" type="number" min="1024" max="10000000" step="1024"></div>
     <div class="row"><label data-i18n-zh="最大输出 Tokens" data-i18n-en="Max Output Tokens">最大输出 Tokens</label><input id="max_output_tokens" type="number" min="1" max="131072"></div>
-    <div class="row"><label data-i18n-zh="温度" data-i18n-en="Temperature">温度</label><input id="temperature" type="number" step="0.01" min="0" max="2" placeholder="(unset)"></div>
-    <div class="row"><label data-i18n-zh="Top P" data-i18n-en="Top P">Top P</label><input id="top_p" type="number" step="0.01" min="0" max="1" placeholder="(unset)"></div>
   </div></div>
   <div class="card"><h2 class="section-toggle" onclick="toggleSection(this)"><span class="icon">&#127760;</span> <span data-i18n-zh="网页抓取" data-i18n-en="Web Fetch">网页抓取</span></h2><div class="section-body">
     <div class="row"><label data-i18n-zh="最大 URL 数" data-i18n-en="Max URLs">最大 URL 数</label><input id="web_fetch_max_urls" type="number" min="0" max="50"></div>
@@ -284,8 +300,6 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
     <div class="row"><label data-i18n-zh="推理强度" data-i18n-en="Reasoning Effort">推理强度</label><select id="claude_reasoning_effort"><option value="" data-i18n-zh="(由 DeepSeek 决定)" data-i18n-en="(let DeepSeek decide)">(由 DeepSeek 决定)</option><option value="min">min</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="max">max</option></select></div>
     <div class="row"><label data-i18n-zh="上下文窗口" data-i18n-en="Context Window">上下文窗口</label><input id="claude_max_position_embeddings" type="number" min="1024" max="10000000" step="1024"></div>
     <div class="row"><label data-i18n-zh="最大输出 Tokens" data-i18n-en="Max Output Tokens">最大输出 Tokens</label><input id="claude_max_output_tokens" type="number" min="1" max="131072"></div>
-    <div class="row"><label data-i18n-zh="温度" data-i18n-en="Temperature">温度</label><input id="claude_temperature" type="number" step="0.01" min="0" max="2" placeholder="(unset)"></div>
-    <div class="row"><label data-i18n-zh="Top P" data-i18n-en="Top P">Top P</label><input id="claude_top_p" type="number" step="0.01" min="0" max="1" placeholder="(unset)"></div>
   </div></div>
   <div class="card"><h2 class="section-toggle" onclick="toggleSection(this)"><span class="icon">&#9881;</span> <span data-i18n-zh="模型选项" data-i18n-en="Model Options">模型选项</span></h2><div class="section-body">
     <div class="row"><label for="claude_strip_thinking" data-i18n-zh="过滤 Thinking" data-i18n-en="Strip Thinking">过滤 Thinking</label><input id="claude_strip_thinking" type="checkbox" checked><span class="hint" data-i18n-zh="不在 Claude Code 中显示推理过程" data-i18n-en="Hide reasoning in Claude Code output">不在 Claude Code 中显示推理过程</span></div>
@@ -315,7 +329,11 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
   <div class="card"><h2><span class="icon">&#128225;</span> <span data-i18n-zh="系统状态" data-i18n-en="System Status">系统状态</span></h2>
     <div style="font-size:13px;">
       <div style="margin-bottom:6px;"><span class="status-dot" id="ds-status-dot"></span><span data-i18n-zh="DeepSeek API：" data-i18n-en="DeepSeek API: ">DeepSeek API：</span><span id="ds-status">--</span></div>
-      <div style="margin-bottom:6px;"><span class="status-dot" id="redis-status-dot"></span><span>Redis：</span><span id="redis-status">--</span></div>
+      <div style="margin-bottom:6px;"><span class="status-dot up"></span><span>推理缓存：</span><span id="redis-status">本地文件</span></div>
+      <div style="margin-bottom:8px;font-size:12px;color:var(--muted);" id="cache-detail"></div>
+      <button class="btn btn-secondary" onclick="clearCache('')" style="font-size:11px;padding:3px 10px;">清理全部缓存</button>
+      <button class="btn btn-secondary" onclick="clearCache('codex')" style="font-size:11px;padding:3px 10px;margin-left:4px;">清理 Codex</button>
+      <button class="btn btn-secondary" onclick="clearCache('claude')" style="font-size:11px;padding:3px 10px;margin-left:4px;">清理 Claude</button>
     </div>
   </div>
   <div class="card"><h2><span class="icon">&#128187;</span> <span data-i18n-zh="终端环境变量" data-i18n-en="Terminal Env">终端环境变量</span></h2>
@@ -453,8 +471,6 @@ async function loadConfig(){
     document.getElementById('reasoning_effort').value=cfg.reasoning_effort||'';
     document.getElementById('max_position_embeddings').value=cfg.max_position_embeddings||1000000;
     document.getElementById('max_output_tokens').value=cfg.max_output_tokens||'';
-    document.getElementById('temperature').value=cfg.temperature!=null?cfg.temperature:'';
-    document.getElementById('top_p').value=cfg.top_p!=null?cfg.top_p:'';
     document.getElementById('web_fetch_max_urls').value=cfg.web_fetch_max_urls||'';
     document.getElementById('web_fetch_timeout').value=cfg.web_fetch_timeout||'';
     document.getElementById('web_fetch_max_body').value=cfg.web_fetch_max_body||'';
@@ -467,8 +483,6 @@ async function loadConfig(){
     document.getElementById('claude_reasoning_effort').value=cfg.claude_reasoning_effort||'';
     document.getElementById('claude_max_position_embeddings').value=cfg.claude_max_position_embeddings||1000000;
     document.getElementById('claude_max_output_tokens').value=cfg.claude_max_output_tokens||'';
-    document.getElementById('claude_temperature').value=cfg.claude_temperature!=null?cfg.claude_temperature:'';
-    document.getElementById('claude_top_p').value=cfg.claude_top_p!=null?cfg.claude_top_p:'';
     document.getElementById('claude_strip_thinking').checked=cfg.claude_strip_thinking!==false;
     document.getElementById('claude_skip_dangerous_mode').checked=cfg.claude_skip_dangerous_mode!==false;
     document.getElementById('claude_deepseek_thinking_enabled').checked=cfg.claude_deepseek_thinking_enabled===true;
@@ -491,8 +505,6 @@ async function saveConfig(){
     reasoning_effort: document.getElementById('reasoning_effort').value||null,
     max_position_embeddings: parseInt(document.getElementById('max_position_embeddings').value)||1000000,
     max_output_tokens: parseInt(document.getElementById('max_output_tokens').value)||16384,
-    temperature: document.getElementById('temperature').value?parseFloat(document.getElementById('temperature').value):null,
-    top_p: document.getElementById('top_p').value?parseFloat(document.getElementById('top_p').value):null,
     web_fetch_max_urls: parseInt(document.getElementById('web_fetch_max_urls').value),
     web_fetch_timeout: parseInt(document.getElementById('web_fetch_timeout').value),
     web_fetch_max_body: parseInt(document.getElementById('web_fetch_max_body').value),
@@ -505,8 +517,6 @@ async function saveConfig(){
     claude_reasoning_effort: document.getElementById('claude_reasoning_effort').value||null,
     claude_max_position_embeddings: parseInt(document.getElementById('claude_max_position_embeddings').value)||1000000,
     claude_max_output_tokens: parseInt(document.getElementById('claude_max_output_tokens').value)||16384,
-    claude_temperature: document.getElementById('claude_temperature').value?parseFloat(document.getElementById('claude_temperature').value):null,
-    claude_top_p: document.getElementById('claude_top_p').value?parseFloat(document.getElementById('claude_top_p').value):null,
     claude_strip_thinking: document.getElementById('claude_strip_thinking').checked,
     claude_skip_dangerous_mode: document.getElementById('claude_skip_dangerous_mode').checked,
     claude_deepseek_thinking_enabled: document.getElementById('claude_deepseek_thinking_enabled').checked,
@@ -637,6 +647,23 @@ async function refreshSessions(){
     document.getElementById('stat-sessions').textContent=s.memory_sessions+s.redis_sessions;
   }catch(e){}
 }
+async function refreshCacheInfo(){
+  try{
+    var r=await fetch('/cache-info',{headers:authHeaders()});
+    if(r.ok){
+      var c=(await r.json()).cache;
+      document.getElementById('cache-detail').textContent=c.file_count+' 个文件, '+c.file_size_str+' / 内存 '+c.memory_count+' 会话';
+      document.getElementById('redis-status').textContent='本地文件 ('+c.file_size_str+')';
+    }
+  }catch(e){}
+}
+async function clearCache(source){
+  try{
+    var r=await fetch('/cache-clear',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},authHeaders()),body:JSON.stringify({source:source})});
+    if(r.ok){ var d=await r.json(); toast(t('已清理 '+d.deleted+' 个缓存文件','Cleared '+d.deleted+' cache files'),true); refreshCacheInfo(); }
+    else toast(t('清理失败','Clear failed'),false);
+  }catch(e){ toast(t('清理失败','Clear failed')+': '+e,false); }
+}
 async function refreshLogs(){
   try{
     var r=await fetch('/logs?limit=20',{headers:authHeaders()}), data=await r.json(), list=document.getElementById('log-list');
@@ -655,22 +682,18 @@ async function checkStatus(){
       var s=await r.json();
       document.getElementById('ds-status').textContent=s.deepseek||'OK';
       document.getElementById('ds-status-dot').className='status-dot ' + (s.deepseek==='connected'?'up':'down');
-      document.getElementById('redis-status').textContent=s.redis||'OK';
-      document.getElementById('redis-status-dot').className='status-dot ' + (s.redis==='connected'?'up':'down');
       document.getElementById('status-dot').className='dot';
     }
   }catch(e){
     document.getElementById('ds-status').textContent='--';
     document.getElementById('ds-status-dot').className='status-dot down';
-    document.getElementById('redis-status').textContent='--';
-    document.getElementById('redis-status-dot').className='status-dot down';
     document.getElementById('status-dot').className='dot';
     document.getElementById('status-dot').style.background='var(--danger)';
   }
 }
 function init(){
-  applyLang(); loadConfig(); refreshStats(); refreshSessions(); refreshLogs(); checkStatus(); loadProxyStatus();
-  setInterval(refreshStats,5000); setInterval(refreshSessions,30000); setInterval(refreshLogs,15000); setInterval(checkStatus,30000);
+  applyLang(); loadConfig(); refreshStats(); refreshSessions(); refreshLogs(); checkStatus(); loadProxyStatus(); refreshCacheInfo();
+  setInterval(refreshStats,5000); setInterval(refreshSessions,30000); setInterval(refreshLogs,15000); setInterval(checkStatus,30000); setInterval(refreshCacheInfo,30000);
 }
 init();
 </script>

@@ -92,9 +92,6 @@ $env:DEEPSEEK_BASE           = if ($env:DEEPSEEK_BASE)           { $env:DEEPSEEK
 $env:DEFAULT_MODEL           = if ($env:DEFAULT_MODEL)           { $env:DEFAULT_MODEL }           else { "deepseek-v4-pro" }
 $env:DEFAULT_REASONING_EFFORT = if ($env:DEFAULT_REASONING_EFFORT) { $env:DEFAULT_REASONING_EFFORT } else { "max" }
 $env:MAX_POSITION_EMBEDDINGS = if ($env:MAX_POSITION_EMBEDDINGS) { $env:MAX_POSITION_EMBEDDINGS } else { "1000000" }
-$env:REDIS_HOST              = if ($env:REDIS_HOST)              { $env:REDIS_HOST }              else { "127.0.0.1" }
-$env:REDIS_PORT              = if ($env:REDIS_PORT)              { $env:REDIS_PORT }              else { "6379" }
-$env:REDIS_DB                = if ($env:REDIS_DB)                { $env:REDIS_DB }                else { "0" }
 $env:CONNECT_PORT            = if ($env:CONNECT_PORT)            { $env:CONNECT_PORT }            else { "8443" }
 $env:TLS_PORT                = if ($env:TLS_PORT)                { $env:TLS_PORT }                else { "8444" }
 
@@ -233,13 +230,13 @@ if ($isAdmin) {
 
 # -- 步骤 3：安装 Python 依赖 ----------------------------
 
-& $pythonExe -c "import fastapi,uvicorn,httpx,redis,cryptography" 2>$null
+& $pythonExe -c "import fastapi,uvicorn,httpx,cryptography" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "  [*] 安装 Python 依赖..." -ForegroundColor Yellow
-    Invoke-Pip install -q fastapi "uvicorn[standard]" httpx redis cryptography 2>$null
+    Invoke-Pip install -q fastapi "uvicorn[standard]" httpx cryptography 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [*] 默认 PyPI 不可用，切换到清华镜像..." -ForegroundColor Yellow
-        Invoke-Pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" httpx redis cryptography
+        Invoke-Pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" httpx cryptography
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  [X] 依赖安装失败，请手动安装" -ForegroundColor Red
             exit 1
