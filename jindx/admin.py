@@ -691,8 +691,10 @@ async function checkStatus(){
     document.getElementById('status-dot').style.background='var(--danger)';
   }
 }
-function init(){
-  applyLang(); loadConfig(); refreshStats(); refreshSessions(); refreshLogs(); checkStatus(); loadProxyStatus(); refreshCacheInfo();
+async function init(){
+  applyLang();
+  await loadConfig();
+  refreshStats(); refreshSessions(); refreshLogs(); checkStatus(); loadProxyStatus(); refreshCacheInfo();
   setInterval(refreshStats,5000); setInterval(refreshSessions,30000); setInterval(refreshLogs,15000); setInterval(checkStatus,30000); setInterval(refreshCacheInfo,30000);
 }
 init();

@@ -17,6 +17,7 @@ from threading import Lock
 from typing import Literal
 
 from .config import config, REASONING_CACHE_MAX
+from .stats import record_cache
 
 logger = logging.getLogger(__name__)
 
@@ -182,13 +183,16 @@ def get_cached_reasoning(source: Source, session_id: str) -> list[str]:
     # 文件优先
     try:
         result = _cache_file_get(source, session_id, cache_ttl)
+        record_cache(bool(result))
         if result:
             return result
     except Exception:
         pass
 
     # 内存兜底
-    return _cache_memory_get(_full_key(source, session_id), cache_ttl)
+    result = _cache_memory_get(_full_key(source, session_id), cache_ttl)
+    record_cache(bool(result))
+    return result
 
 
 def cache_reasoning(source: Source, session_id: str, reasoning_text: str):
