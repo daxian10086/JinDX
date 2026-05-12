@@ -315,6 +315,15 @@ async def _stream_anthropic_from_chat(chat_request: dict, session_id: str,
                     "error": {"type": "api_error", "message": body_str}})
                 return
 
+            # 立即发送初始化事件，防止上游推理时间长导致 Claude Code 判定超时断连
+            started = True
+            yield _emit("message_start", {"type": "message_start",
+                "message": {"id": msg_id, "type": "message", "role": "assistant",
+                             "model": upstream_model, "content": [],
+                             "usage": {"input_tokens": 0}}})
+            yield _emit("content_block_start", {"type": "content_block_start",
+                "index": 0, "content_block": {"type": "text", "text": ""}})
+
             async for line in up.aiter_lines():
                 if not line.startswith("data: "): continue
                 data_str = line[6:]
@@ -332,15 +341,6 @@ async def _stream_anthropic_from_chat(chat_request: dict, session_id: str,
                 reasoning_delta = d.get("reasoning_content", "") or ""
                 if choices[0].get("finish_reason"):
                     finish_reason = choices[0]["finish_reason"]
-
-                if not started:
-                    started = True
-                    yield _emit("message_start", {"type": "message_start",
-                        "message": {"id": msg_id, "type": "message", "role": "assistant",
-                                     "model": upstream_model, "content": [],
-                                     "usage": {"input_tokens": 0}}})
-                    yield _emit("content_block_start", {"type": "content_block_start",
-                        "index": 0, "content_block": {"type": "text", "text": ""}})
 
                 if reasoning_delta:
                     reasoning_buf += reasoning_delta
@@ -390,11 +390,57 @@ async def _stream_anthropic_from_chat(chat_request: dict, session_id: str,
                 cache_reasoning("claude", session_id, reasoning_buf[:8000])
                 cache_reasoning("claude", "recent", reasoning_buf[:8000])
                 logger.info(f"Claude cached reasoning for {session_id} ({len(reasoning_buf)} chars)")
+            return
 
+    except GeneratorExit:
+        raise
+    except httpx.ReadError as e:
+        record_error(500)
+        logger.warning(f"Claude stream read error at eof (likely upstream closed early): {e}")
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         record_error(500)
         yield _emit("error", {"type": "error",
             "error": {"type": "api_error", "message": str(e)}})
+        return
+    except Exception as e:
+        record_error(500)
+        logger.exception(f"Claude stream unexpected error: {e}")
+
+    # 异常收尾：确保即使中途出错也发送完整的结束事件
+    if not started:
+        yield _emit("message_start", {"type": "message_start",
+            "message": {"id": msg_id, "type": "message", "role": "assistant",
+                         "model": upstream_model, "content": [],
+                         "usage": {"input_tokens": 0}}})
+        yield _emit("content_block_start", {"type": "content_block_start",
+            "index": 0, "content_block": {"type": "text", "text": ""}})
+
+    yield _emit("content_block_stop", {"type": "content_block_stop", "index": 0})
+
+    has_tc = len(pending_tc) > 0
+    bi = 1
+    for ti in sorted(pending_tc.keys()):
+        tc = pending_tc[ti]
+        tcid = _ensure_tool_use_id(tc.get("id", ""))
+        targs = tc.get("arguments", "{}")
+        yield _emit("content_block_start", {"type": "content_block_start",
+            "index": bi, "content_block": {"type": "tool_use", "id": tcid,
+                "name": tc.get("name", ""), "input": {}}})
+        if targs:
+            yield _emit("content_block_delta", {"type": "content_block_delta",
+                "index": bi, "delta": {"type": "input_json_delta", "partial_json": targs}})
+        yield _emit("content_block_stop", {"type": "content_block_stop", "index": bi})
+        bi += 1
+
+    stop_reason = "tool_use" if has_tc else finish_reason
+    yield _emit("message_delta", {"type": "message_delta",
+        "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+        "usage": {"output_tokens": total_usage.get("completion_tokens", 0)}})
+    yield _emit("message_stop", {"type": "message_stop"})
+
+    if reasoning_buf:
+        cache_reasoning("claude", session_id, reasoning_buf[:8000])
+        cache_reasoning("claude", "recent", reasoning_buf[:8000])
 
 
 def _get_upstream() -> str:
