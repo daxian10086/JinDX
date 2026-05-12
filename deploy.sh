@@ -115,9 +115,12 @@ log "配置 iptables 规则..."
 
 # DeepSeek API 的 IP (允许直连)
 DEEPSEEK_IP="198.18.18.41"
+# GitHub SSH 专用 IP (允许 git push 通过)
+GITHUB_SSH_IP="198.18.0.55"
 
 iptables -t nat -F OUTPUT 2>/dev/null || true
 iptables -t nat -A OUTPUT -d "${DEEPSEEK_IP}" -p tcp --dport 443 -j ACCEPT
+iptables -t nat -A OUTPUT -d "${GITHUB_SSH_IP}" -p tcp --dport 443 -j ACCEPT
 iptables -t nat -A OUTPUT -d 127.0.0.1/32 -p tcp --dport 443 -j DNAT --to-destination 127.0.0.1:8444
 
 # 持久化
