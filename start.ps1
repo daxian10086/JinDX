@@ -252,9 +252,9 @@ $codexConfigFile = "$codexConfigDir\config.toml"
 
 # 构建跨平台 projects 信任段
 $homePath = $env:USERPROFILE -replace '\\', '/'
-$projectsSection = @"
+$projectsSection = @'
 
-[projects."$homePath"]
+[projects."HOME_PATH_PLACEHOLDER"]
 trust_level = "trusted"
 
 [projects."C:/"]
@@ -262,7 +262,7 @@ trust_level = "trusted"
 
 [projects."D:/"]
 trust_level = "trusted"
-"@
+'@ -replace 'HOME_PATH_PLACEHOLDER', $homePath
 
 $codexConfigContent = @"
 model = "gpt-5.5"
