@@ -16,7 +16,7 @@ sudo bash deploy.sh
 
 ### macOS
 
-**前置要求**：Python 3.10+，可选 `brew install redis` 启用推理缓存。
+**前置要求**：Python 3.10+。
 
 ```bash
 git clone https://github.com/daxian10086/JinDX.git
@@ -26,7 +26,7 @@ cd JinDX
 bash install-macos.sh
 
 # 方式二：手动启动（开发/测试）
-pip3 install fastapi "uvicorn[standard]" httpx redis cryptography
+pip3 install fastapi "uvicorn[standard]" httpx cryptography
 ./start.sh
 ```
 
@@ -45,7 +45,25 @@ launchctl unload ~/Library/LaunchAgents/com.jindx.proxy.plist  # 卸载
 
 ### Windows
 
-**前置要求**：Python 3.10+（安装时勾选"Add Python to PATH"），可选安装 Redis for Windows。
+**方式一：后台免 Python 版（推荐）**
+
+无需安装 Python，下载 Release zip 解压后直接运行：
+
+```powershell
+# 右键 PowerShell → 以管理员身份运行（推荐，自动配置 hosts 劫持 + 端口转发）
+.\start-backend.ps1
+
+# 或 CMD 启动（无需管理员，但无 hosts 劫持功能）
+start-backend.bat
+```
+
+**方式二：桌面 GUI 版**
+
+下载 `jindx-gui-vX.Y.Z.zip` 解压，运行 `jindx-gui.exe`。功能包括：系统托盘图标、Codex / Claude 配置面板、实时统计 + 日志查看、环境变量一键复制、开机自启。
+
+**方式三：源码版（开发者）**
+
+**前置要求**：Python 3.10+（安装时勾选"Add Python to PATH"）。
 
 ```powershell
 git clone https://github.com/daxian10086/JinDX.git
@@ -55,7 +73,7 @@ cd JinDX
 .\start.ps1
 ```
 
-start.ps1 以管理员运行时自动配置 hosts 劫持（5 个域名 → 127.0.0.1）和 netsh 端口转发（127.0.0.1:443 → 8444），启动后输出 Codex CLI / Claude Code 环境变量。非管理员也可运行（缺少劫持功能）。
+start.ps1 以管理员运行时自动配置 hosts 劫持（5 个域名 → 127.0.0.1）和 netsh 端口转发（127.0.0.1:443 → 8444），首次运行自动安装 pip 依赖，启动后输出 Codex CLI / Claude Code 环境变量。非管理员也可运行（缺少劫持功能）。
 
 **自定义参数**：
 
@@ -77,7 +95,7 @@ start.bat
 ### 开发环境（所有平台通用）
 
 ```bash
-pip install fastapi "uvicorn[standard]" httpx redis cryptography
+pip install fastapi "uvicorn[standard]" httpx cryptography
 ./start.sh          # Linux/macOS
 start.bat           # Windows
 ```
@@ -106,11 +124,13 @@ claude
 
 | 功能 | Linux | macOS | Windows |
 |------|-------|-------|---------|
-| 后台服务 | systemd | launchd | 手动启动（可加入 startup） |
+| 后台服务 | systemd | launchd | 系统托盘 GUI / 手动启动 |
 | hosts 劫持 | /etc/hosts | /etc/hosts | `C:\Windows\System32\drivers\etc\hosts` |
 | 端口转发 (443→8444) | iptables DNAT | pfctl rdr | netsh portproxy |
 | TLS 证书 | cryptography / openssl | cryptography | cryptography |
-| 安装脚本 | deploy.sh | install-macos.sh | start.ps1（管理员） |
+| 安装脚本 | deploy.sh | install-macos.sh | start.ps1 / start-backend.ps1 |
+| 免 Python 启动 | — | — | proxy-backend.exe |
+| GUI 桌面应用 | — | — | jindx-gui.exe |
 | 开发启动 | start.sh | start.sh | start.bat / start.ps1 |
 | 配置文件 | `~/.config/proxy-config.json` | `~/Library/Application Support/` | `%APPDATA%\` |
 | 镜像回退 | apt→阿里云, pip→清华 | pip→清华, brew提示 | pip→清华 |
@@ -128,9 +148,6 @@ claude
 | `TLS_PORT` | `8444` | 直接 TLS 端口（配合 hosts 劫持） |
 | `CONNECT_PORT` | `8443` | CONNECT 隧道端口 |
 | `ADMIN_PORT` | `8090` | Web 管理面板端口 |
-| `REDIS_HOST` | `127.0.0.1` | Redis 地址 |
-| `REDIS_PORT` | `6379` | Redis 端口 |
-| `REDIS_DB` | `0` | Redis 数据库编号 |
 | `DEFAULT_REASONING_EFFORT` | — | 推理强度 (min/low/medium/high/max) |
 | `MAX_POSITION_EMBEDDINGS` | `1000000` | 最大上下文长度 |
 | `REASONING_CACHE_MAX` | `10` | 每会话最多缓存的推理条数 |
@@ -215,7 +232,7 @@ Responses API 请求
 - **模型映射**：OpenAI 模型名 → DeepSeek 模型名
 - **生成参数**：推理强度、上下文窗口、最大输出、Temperature、Top P
 - **网页抓取**：最大 URL 数、超时、响应体上限
-- **推理缓存**：开关 + TTL（Redis 优先，内存兜底）
+- **推理缓存**：开关 + TTL（本地文件，重启不丢）
 
 ### Claude 标签
 
@@ -227,7 +244,7 @@ Responses API 请求
 
 - **实时统计**：运行时间、请求数、活跃流、错误率、缓存命中率、活跃会话
 - **终端环境变量**：一键复制 Codex CLI / Claude Code 环境变量
-- **系统状态**：DeepSeek API 连通性、Redis 状态
+- **系统状态**：DeepSeek API 连通性、缓存状态
 - **上游错误 / 最近日志**：错误排查
 
 所有配置保存即时生效，无需重启。
@@ -242,18 +259,29 @@ JinDX/
 │   ├── config.py                    # 运行时配置（线程安全 + 跨平台路径）
 │   ├── stats.py                     # 统计计数 + 日志缓冲 + 敏感信息脱敏
 │   ├── web_fetch.py                 # URL 检测 / 预取 / 抓取
-│   ├── cache.py                     # 推理缓存（Redis + 内存双写 + Session 隔离 + 自动重连）
+│   ├── cache.py                     # 推理缓存（本地文件 + Session 隔离）
 │   ├── protocol.py                  # Responses ↔ Chat 格式翻译
 │   ├── routes.py                    # HTTP / SSE / WebSocket 路由 + 共享 httpx 客户端
 │   ├── codex.py                     # Codex RPC 模拟 + 模型目录
 │   ├── claude.py                    # Anthropic Messages ↔ DeepSeek 协议翻译
 │   ├── admin.py                     # Web 管理 API + 内嵌 HTML UI
 │   └── tunnel.py                    # TLS CA+Server 证书链生成 + CONNECT 隧道
+├── gui/                             # Windows GUI 桌面应用
+│   ├── main.go                      # Go 入口（embed proxy-backend.exe）
+│   ├── app.go                       # Wails 绑定：代理控制、配置管理、开机自启
+│   ├── wails.json                   # Wails 项目配置
+│   ├── sys_windows.go               # Windows 特化（注册表自启）
+│   ├── sys_other.go                 # 非 Windows 桩
+│   └── frontend/                    # React 前端（TypeScript + Vite）
 ├── deploy.sh                        # Linux 一键部署（systemd + iptables）
 ├── install-macos.sh                 # macOS 安装脚本（launchd + pfctl）
 ├── start.sh                         # Linux/macOS 开发启动
-├── start.bat                        # Windows CMD 启动
-├── start.ps1                        # Windows PowerShell 启动
+├── start.bat                        # Windows CMD 启动（源码版，需 Python）
+├── start.ps1                        # Windows PowerShell 启动（源码版，需 Python）
+├── start-backend.bat                # Windows CMD 启动（免 Python，需 proxy-backend.exe）
+├── start-backend.ps1                # Windows PowerShell 启动（免 Python）
+├── build-exe.ps1                    # 单 exe 打包（PyInstaller + Wails）
+├── build-release.ps1                # Release 双版本打包（后台版 + GUI 版）
 ├── platform/                        # 系统服务定义文件
 │   ├── com.jindx.proxy.plist        # macOS launchd
 │   └── chat-responses-proxy.service # Linux systemd
@@ -261,6 +289,7 @@ JinDX/
 │   ├── repair.sh                    # Shell 诊断修复
 │   └── repair.py                    # Python 诊断修复模块
 ├── requirements.txt                 # Python 依赖
+├── .gitignore
 └── README.md
 ```
 
@@ -276,9 +305,9 @@ DeepSeek 要求同一轮的所有 tool_calls 必须在一个 assistant 消息中
 
 ### 推理缓存
 
-DeepSeek 思考模式要求所有 assistant 消息都携带 `reasoning_content`。代理缓存每轮对话的推理内容（Redis 优先，内存兜底），下一轮注入到历史 assistant 消息中。
+DeepSeek 思考模式要求所有 assistant 消息都携带 `reasoning_content`。代理缓存每轮对话的推理内容（本地文件缓存），下一轮注入到历史 assistant 消息中。
 
-- Codex 与 Claude 的推理缓存完全隔离（Redis key 格式：`reasoning:{codex|claude}:{session_id}`）
+- Codex 与 Claude 的推理缓存完全隔离（缓存路径格式：`reasoning/{codex|claude}/{session_hash}`）
 - 默认关闭 thinking（避免 `reasoning_content` 400 错误），可在管理面板开启
 - 缓存注入仅在 thinking 启用时生效，关闭时保持消息原样以最大化 prompt cache 命中率
 
@@ -300,7 +329,7 @@ DeepSeek 思考模式要求所有 assistant 消息都携带 `reasoning_content`�
 
 ### Session 隔离
 
-Codex 和 Claude 分别使用 `"codex"` 和 `"claude"` 作为缓存 source 前缀，Redis key 和内存缓存完全隔离。Session ID 使用 SHA256 哈希生成，降低碰撞概率。
+Codex 和 Claude 分别使用 `"codex"` 和 `"claude"` 作为缓存目录，Session 缓存完全隔离。Session ID 使用 SHA256 哈希生成，降低碰撞概率。
 
 ## 常用命令
 
@@ -334,4 +363,7 @@ launchctl start com.jindx.proxy             # 启动
 
 ### Windows
 
-以管理员身份运行 PowerShell：`.\start.ps1`
+以管理员身份运行 PowerShell：
+- 免 Python 版：`.\start-backend.ps1`
+- 源码版：`.\start.ps1`
+- CMD 版：`start-backend.bat`（免 Python）或 `start.bat`（源码版）

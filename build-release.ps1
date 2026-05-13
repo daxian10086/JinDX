@@ -2,10 +2,10 @@
 # 在 Windows 上执行，生成两个 zip 包放到 release/ 目录
 #
 # 前置要求:
-#   - Python 3.10+  (如果还要打包 exe，则还需要 Go 1.22+ / Node.js 18+ / Wails CLI)
-#   - Go 1.22+ (winget install GoLang.Go)
-#   - Node.js 18+ (winget install OpenJS.NodeJS.LTS)
-#   - Wails CLI (go install github.com/wailsapp/wails/v3/cmd/wails3@latest)
+#   - Python 3.10+  (winget install Python.Python.3.11 -e)
+#   - Go 1.22+ (winget install GoLang.Go -e) — 仅 GUI 版需要
+#   - Node.js 18+ (winget install OpenJS.NodeJS.LTS -e) — 仅 GUI 版需要
+#   - Wails CLI (go install github.com/wailsapp/wails/v3/cmd/wails3@latest) — 仅 GUI 版需要
 #
 # 用法:
 #   .\build-release.ps1                # 打包两个版本
@@ -13,7 +13,7 @@
 #   .\build-release.ps1 -GuiOnly       # 仅桌面版
 #
 # 输出:
-#   release/jindx-backend-vX.Y.Z.zip    — 后台命令行版（Python 原文件）
+#   release/jindx-backend-vX.Y.Z.zip    — 后台命令行版（proxy-backend.exe + 启动脚本）
 #   release/jindx-gui-vX.Y.Z.zip        — 前台桌面版（Wails GUI exe）
 
 param(
@@ -39,26 +39,105 @@ New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 
 # ═══════════════════════════════════════════════════════════
-# 阶段 1: 后台命令行版 — 直接打包 Python 原文件
+# 共享步骤: PyInstaller 构建 proxy-backend.exe
+# 后台版和 GUI 版都需要这个 exe
+# ═══════════════════════════════════════════════════════════
+
+$pybackDir = "$tempDir\pyback"
+New-Item -ItemType Directory -Path $pybackDir -Force | Out-Null
+$proxyExe = "$pybackDir\proxy-backend.exe"
+
+# 查找 Python
+$pythonExe = $null
+$managedPython = "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.11.12\python.exe"
+$userPythonDir = "C:\Users\Administrator\AppData\Local\Programs\Python\Python311"
+$userPython = "$userPythonDir\python.exe"
+
+if (Test-Path $managedPython) {
+    $pythonExe = $managedPython
+} elseif (Test-Path $userPython) {
+    $pythonExe = $userPython
+} elseif (Test-Path "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe") {
+    $pythonExe = "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe"
+} elseif (Test-Path "C:\Users\Administrator\AppData\Local\Programs\Python\Python313\python.exe") {
+    $pythonExe = "C:\Users\Administrator\AppData\Local\Programs\Python\Python313\python.exe"
+}
+
+if (-not $pythonExe) {
+    Write-Host "  [X] 未找到 Python" -ForegroundColor Red
+    Write-Host "      winget install Python.Python.3.11 -e" -ForegroundColor Yellow
+    exit 1
+}
+Write-Host "  [+] Python: $pythonExe" -ForegroundColor Green
+
+function Invoke-Pip { & $pythonExe -m pip @args }
+
+# 检查/安装 PyInstaller 和项目依赖
+Write-Host "  [*] 检查打包依赖..." -ForegroundColor Yellow
+& $pythonExe -c "import PyInstaller" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Invoke-Pip install -q pyinstaller 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Invoke-Pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller
+    }
+}
+& $pythonExe -c "import fastapi,uvicorn,httpx,cryptography" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Invoke-Pip install -q fastapi "uvicorn[standard]" httpx cryptography 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Invoke-Pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" httpx cryptography
+    }
+}
+
+# PyInstaller 打包 Python 代理 -> proxy-backend.exe
+$pybuildWorkPath = "$tempDir\pybuild-work"
+$pyinstallerArgs = @(
+    "--onefile",
+    "--name", "proxy-backend",
+    "--add-data", "jindx;jindx",
+    "--hidden-import", "uvicorn.loops.auto",
+    "--hidden-import", "uvicorn.protocols.http.auto",
+    "--hidden-import", "uvicorn.protocols.websockets.auto",
+    "--hidden-import", "uvicorn.logging",
+    "--hidden-import", "fastapi",
+    "--hidden-import", "httpx",
+    "--hidden-import", "cryptography",
+    "--distpath", $pybackDir,
+    "--workpath", $pybuildWorkPath,
+    "proxy.py"
+)
+
+Write-Host "  [*] PyInstaller 打包 Python 代理..." -ForegroundColor Yellow
+& $pythonExe -m PyInstaller @pyinstallerArgs
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  [X] PyInstaller 打包失败" -ForegroundColor Red
+    exit 1
+}
+Write-Host "  [+] proxy-backend.exe 生成完成" -ForegroundColor Green
+Write-Host ""
+
+# ═══════════════════════════════════════════════════════════
+# 阶段 1: 后台命令行版 — proxy-backend.exe + 启动脚本
 # ═══════════════════════════════════════════════════════════
 
 if (-not $GuiOnly) {
-    Write-Host "  [*] 阶段 1/2: 打包后台命令行版 (Python 原文件)..." -ForegroundColor Yellow
+    Write-Host "  [*] 阶段 1/2: 打包后台命令行版..." -ForegroundColor Yellow
 
     $backendDir = "$tempDir\jindx-backend"
     New-Item -ItemType Directory -Path $backendDir -Force | Out-Null
 
-    # 复制源文件
-    $copyItems = @(
-        "proxy.py",
-        "requirements.txt",
-        "README.md",
-        "start.ps1",
-        "start.bat",
-        "start.sh"
+    # 复制 proxy-backend.exe（免 Python、pip，依赖已内嵌）
+    Copy-Item $proxyExe "$backendDir\" -Force
+    Write-Host "    proxy-backend.exe (已内嵌全部依赖)" -ForegroundColor Gray
+
+    # 复制免 Python 启动脚本
+    $backendScripts = @(
+        "start-backend.ps1",
+        "start-backend.bat",
+        "README.md"
     )
 
-    foreach ($item in $copyItems) {
+    foreach ($item in $backendScripts) {
         $src = "$PSScriptRoot\$item"
         if (Test-Path $src) {
             Copy-Item $src "$backendDir\" -Force
@@ -66,21 +145,13 @@ if (-not $GuiOnly) {
         }
     }
 
-    # 复制 jindx 模块目录
-    $jindxSrc = "$PSScriptRoot\jindx"
-    $jindxDst = "$backendDir\jindx"
-    Copy-Item $jindxSrc $jindxDst -Recurse -Force
-    # 清理 __pycache__
-    Get-ChildItem -Path $jindxDst -Directory -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host "    jindx/" -ForegroundColor Gray
-
     $backendZip = "$releaseDir\jindx-backend-v$Version.zip"
     Compress-Archive -Path "$backendDir\*" -DestinationPath $backendZip
     Write-Host "  [+] 后台版: jindx-backend-v$Version.zip" -ForegroundColor Green
 }
 
 # ═══════════════════════════════════════════════════════════
-# 阶段 2: 前台桌面版 — 打包单个 exe (Python 代理嵌入)
+# 阶段 2: 前台桌面版 — Wails GUI exe (嵌入 proxy-backend.exe)
 # ═══════════════════════════════════════════════════════════
 
 if (-not $BackendOnly) {
@@ -91,7 +162,7 @@ if (-not $BackendOnly) {
     $goExe = Get-Command go -ErrorAction SilentlyContinue
     if (-not $goExe) {
         Write-Host "  [X] 未找到 Go，跳过桌面版打包" -ForegroundColor Red
-        Write-Host "      winget install GoLang.Go" -ForegroundColor Yellow
+        Write-Host "      winget install GoLang.Go -e" -ForegroundColor Yellow
         Write-Host "      go install github.com/wailsapp/wails/v3/cmd/wails3@latest" -ForegroundColor Yellow
         exit 1
     }
@@ -103,72 +174,11 @@ if (-not $BackendOnly) {
         exit 1
     }
 
-    # 查找 Python
-    $pythonExe = $null
-    $managedPython = "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python.exe"
-    $userPythonDir = "C:\Users\Administrator\AppData\Local\Programs\Python\Python313"
-    $userPython = "$userPythonDir\python.exe"
-
-    if (Test-Path $managedPython) {
-        $pythonExe = $managedPython
-    } elseif (Get-Command python -ErrorAction SilentlyContinue) {
-        $pythonExe = (Get-Command python).Source
-    } elseif (Test-Path $userPython) {
-        $pythonExe = $userPython
-    }
-
-    if (-not $pythonExe) {
-        Write-Host "  [X] 未找到 Python" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "  [+] Python: $pythonExe" -ForegroundColor Green
-
-    function Invoke-Pip { & $pythonExe -m pip @args }
-
-    # 安装依赖
-    Write-Host "  [*] 安装打包依赖..." -ForegroundColor Yellow
-    & $pythonExe -c "import PyInstaller" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Invoke-Pip install -q pyinstaller 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Invoke-Pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple pyinstaller
-        }
-    }
-    & $pythonExe -c "import fastapi,uvicorn,httpx,cryptography" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        Invoke-Pip install -q fastapi "uvicorn[standard]" httpx cryptography 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            Invoke-Pip install -q -i https://pypi.tuna.tsinghua.edu.cn/simple fastapi "uvicorn[standard]" httpx cryptography
-        }
-    }
-
-    # PyInstaller 打包 Python 代理 -> proxy-backend.exe (供 Wails embed)
+    # 复制 proxy-backend.exe 到 gui/ 供 Wails embed
     $embedDir = "$PSScriptRoot\gui"
     $embedExePath = "$embedDir\proxy-backend.exe"
-
-    $pyinstallerArgs = @(
-        "--onefile",
-        "--name", "proxy-backend",
-        "--add-data", "jindx;jindx",
-        "--hidden-import", "uvicorn.loops.auto",
-        "--hidden-import", "uvicorn.protocols.http.auto",
-        "--hidden-import", "uvicorn.protocols.websockets.auto",
-        "--hidden-import", "uvicorn.logging",
-        "--hidden-import", "fastapi",
-        "--hidden-import", "httpx",
-        "--hidden-import", "cryptography",
-        "--distpath", $embedDir,
-        "--workpath", "$tempDir\pybuild",
-        "proxy.py"
-    )
-
-    Write-Host "  [*] PyInstaller 打包 Python 代理..." -ForegroundColor Yellow
-    & $pythonExe -m PyInstaller @pyinstallerArgs
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  [X] PyInstaller 打包失败" -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "  [+] proxy-backend.exe 生成完成" -ForegroundColor Green
+    Copy-Item $proxyExe $embedExePath -Force
+    Write-Host "  [+] proxy-backend.exe -> gui/ (Wails embed)" -ForegroundColor Green
 
     # 安装前端依赖
     $frontendDir = "$embedDir\frontend"

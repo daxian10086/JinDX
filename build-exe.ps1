@@ -4,8 +4,8 @@
 #
 # 前置要求:
 #   - Python 3.10+
-#   - Go 1.22+ (winget install GoLang.Go)
-#   - Node.js 18+ (winget install OpenJS.NodeJS.LTS)
+#   - Go 1.22+ (winget install GoLang.Go -e)
+#   - Node.js 18+ (winget install OpenJS.NodeJS.LTS -e)
 #   - Wails CLI (go install github.com/wailsapp/wails/v3/cmd/wails3@latest)
 #
 # 用法:
@@ -37,21 +37,23 @@ if (-not $GuiOnly) {
     # -- 查找 Python -----------------------------------
 
     $pythonExe = $null
-    $managedPython = "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python.exe"
-    $userPythonDir = "C:\Users\Administrator\AppData\Local\Programs\Python\Python313"
+    $managedPython = "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.11.12\python.exe"
+    $userPythonDir = "C:\Users\Administrator\AppData\Local\Programs\Python\Python311"
     $userPython = "$userPythonDir\python.exe"
 
     if (Test-Path $managedPython) {
         $pythonExe = $managedPython
-    } elseif (Get-Command python -ErrorAction SilentlyContinue) {
-        $pythonExe = (Get-Command python).Source
     } elseif (Test-Path $userPython) {
         $pythonExe = $userPython
+    } elseif (Test-Path "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe") {
+        $pythonExe = "C:\Users\Administrator\AppData\Local\Programs\Python\Python312\python.exe"
+    } elseif (Test-Path "C:\Users\Administrator\AppData\Local\Programs\Python\Python313\python.exe") {
+        $pythonExe = "C:\Users\Administrator\AppData\Local\Programs\Python\Python313\python.exe"
     }
 
     if (-not $pythonExe) {
         Write-Host "  [X] 未找到 Python，请先安装 Python 3.10+" -ForegroundColor Red
-        Write-Host "      winget install Python.Python.3.13"  -ForegroundColor Yellow
+        Write-Host "      winget install Python.Python.3.11 -e"  -ForegroundColor Yellow
         exit 1
     }
 
@@ -149,7 +151,7 @@ if (-not $PythonOnly) {
     $goExe = Get-Command go -ErrorAction SilentlyContinue
     if (-not $goExe) {
         Write-Host "  [X] 未找到 Go，请先安装 Go 1.22+" -ForegroundColor Red
-        Write-Host "      winget install GoLang.Go"  -ForegroundColor Yellow
+        Write-Host "      winget install GoLang.Go -e"  -ForegroundColor Yellow
         exit 1
     }
     Write-Host "  [+] Go: $($goExe.Source)" -ForegroundColor Green
@@ -169,7 +171,7 @@ if (-not $PythonOnly) {
     $nodeExe = Get-Command node -ErrorAction SilentlyContinue
     if (-not $nodeExe) {
         Write-Host "  [X] 未找到 Node.js，请先安装 Node.js 18+" -ForegroundColor Red
-        Write-Host "      winget install OpenJS.NodeJS.LTS"  -ForegroundColor Yellow
+        Write-Host "      winget install OpenJS.NodeJS.LTS -e"  -ForegroundColor Yellow
         exit 1
     }
 
