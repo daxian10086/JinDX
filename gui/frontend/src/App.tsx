@@ -58,8 +58,8 @@ export default function App() {
     try {
       if (action === 'start') {
         const result = await api.StartProxy()
-        if (result && result.error) {
-          showToast('????: ' + result.error, false)
+        if (result === 'stopped') {
+          showToast('Start failed', false)
           return
         }
       }

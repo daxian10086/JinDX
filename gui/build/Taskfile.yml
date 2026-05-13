@@ -1,0 +1,29 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Build the Wails application
+    cmds:
+      - task: windows
+
+  windows:
+    desc: Build for Windows
+    platform: windows
+    cmds:
+      - task: build:frontend
+      - task: build:go
+
+  build:frontend:
+    desc: Build frontend assets
+    dir: ./frontend
+    cmds:
+      - npm install
+      - npm run build
+
+  build:go:
+    desc: Build Go backend and embed frontend
+    dir: .
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -ldflags="-s -w" -o ../dist/jindx-gui.exe -tags="prod" .

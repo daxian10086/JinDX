@@ -1,9 +1,10 @@
-﻿package main
+package main
 
 import (
 	"embed"
 	"io/fs"
 	"log"
+	"os"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -11,6 +12,21 @@ import (
 
 //go:embed all:frontend/dist
 var frontendAssets embed.FS
+
+// releaseProxyExe extracts the embedded proxy-backend.exe to a temp location
+func releaseProxyExe() error {
+	if len(proxyExe) == 0 {
+		return nil
+	}
+	path, err := getProxyExePath()
+	if err != nil {
+		return err
+	}
+	if fileExists(path) {
+		return nil
+	}
+	return os.WriteFile(path, proxyExe, 0700)
+}
 
 func main() {
 	app := NewApp()
@@ -36,15 +52,14 @@ func main() {
 
 	wailsApp.RegisterService(application.NewService(app))
 
-	// Create main window — InitiallyHidden=false 让窗口启动时立即显示在前台
-	window := application.NewWindow(application.WebviewWindowOptions{
-		Name:            "main",
-		Title:           "JinDX Proxy Manager",
-		Width:           960,
-		Height:          720,
-		MinWidth:        800,
-		MinHeight:       600,
-		InitiallyHidden: false,
+	// Create main window
+	window := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:     "main",
+		Title:    "JinDX Proxy Manager",
+		Width:    960,
+		Height:   720,
+		MinWidth:  800,
+		MinHeight: 600,
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: false,
 		},
@@ -75,21 +90,11 @@ func main() {
 		window.Focus()
 	})
 
+	// 启动时显示窗口
+	window.Show()
+	window.Focus()
+
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func releaseProxyExe() error {
-	if len(proxyExe) == 0 {
-		return nil
-	}
-	path, err := getProxyExePath()
-	if err != nil {
-		return err
-	}
-	if fileExists(path) {
-		return nil
-	}
-	return writeEmbeddedExe(path, proxyExe)
 }

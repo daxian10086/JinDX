@@ -1,0 +1,3 @@
+# Wails v3 build configuration
+outputfilename: jindx-gui
+version: "1.0.0"

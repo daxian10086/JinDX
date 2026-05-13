@@ -1,0 +1,6 @@
+version: '3'
+
+tasks:
+  default:
+    cmds:
+      - go build -ldflags="-s -w -H windowsgui" -o ../dist/jindx-gui.exe -tags="prod" .
