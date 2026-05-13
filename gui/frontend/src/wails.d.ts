@@ -1,33 +1,38 @@
-// Wails 桥接类型声明
+﻿// Wails bridge type declarations
 declare global {
   interface Window {
     go: {
       main: {
         App: {
-          // 代理控制
+          // proxy control
           StartProxy(): Promise<string>
           StopProxy(): Promise<string>
           RestartProxy(): Promise<string>
           GetProxyStatus(): Promise<string>
 
-          // 配置
+          // config
           GetConfig(): Promise<Record<string, any>>
           SaveConfig(cfg: Record<string, any>): Promise<void>
+          GetAllConfig(): Promise<Record<string, any>>
 
-          // 统计
+          // statistics
           GetStats(): Promise<Record<string, any>>
           GetLogs(limit: number): Promise<Array<Record<string, any>>>
           GetSystemStatus(): Promise<Record<string, any>>
           GetEnvVars(mode: "codex" | "claude"): Promise<string>
 
-          // 代理开关
+          // proxy switches
           GetProxySwitchStatus(): Promise<Record<string, boolean>>
           ToggleProxySwitch(which: string, enabled: boolean): Promise<void>
 
-          // 系统
+          // system
           IsAdmin(): Promise<boolean>
           GetAutoStart(): Promise<boolean>
           ToggleAutoStart(enabled: boolean): Promise<void>
+
+          // cache
+          GetCacheInfo(): Promise<Record<string, any>>
+          ClearCache(source: string): Promise<Record<string, any>>
         }
       }
     }

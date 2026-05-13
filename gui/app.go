@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -12,11 +12,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+	
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -77,19 +78,7 @@ func writeEmbeddedExe(path string, data []byte) error {
 	return os.WriteFile(path, data, 0700)
 }
 
-func extractProxyExe() error {
-	if len(proxyExe) == 0 {
-		return nil
-	}
-	path, err := getProxyExePath()
-	if err != nil {
-		return err
-	}
-	if fileExists(path) {
-		return nil
-	}
-	return writeEmbeddedExe(path, proxyExe)
-}
+
 
 // ── 代理控制 (Wails Binding) ─────────────────────────────
 
@@ -137,7 +126,7 @@ func (a *App) StartProxy() (string, error) {
 	a.proxyCmd.Env = env
 	a.proxyCmd.Stdout = log.Writer()
 	a.proxyCmd.Stderr = log.Writer()
-	a.proxyCmd.SysProcAttr = &sysProcAttr // 隐藏控制台窗口
+	a.proxyCmd.SysProcAttr = sysProcAttr // 隐藏控制台窗口
 
 	if err := a.proxyCmd.Start(); err != nil {
 		a.proxyCmd = nil
@@ -196,6 +185,26 @@ func (a *App) GetProxyStatus() string {
 	}
 	return "stopped"
 }
+func (a *App) GetCacheInfo() map[string]interface{} {
+	return a.fetchFromAdmin("/cache-info")
+}
+
+func (a *App) ClearCache(source string) map[string]interface{} {
+	cfg := a.loadConfig()
+	adminPort := getCfgStr(cfg, "ADMIN_PORT", "8090")
+	body, _ := json.Marshal(map[string]string{"source": source})
+	url := fmt.Sprintf("http://127.0.0.1:%s/cache-clear", adminPort)
+	resp, err := http.Post(url, "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	var result map[string]interface{}
+	json.Unmarshal(data, &result)
+	return result
+}
+
 
 // ── 配置管理 (Wails Binding) ─────────────────────────────
 
@@ -213,6 +222,29 @@ func (a *App) loadConfig() map[string]interface{} {
 	cfg["TLS_PORT"] = envOr("TLS_PORT", "8444")
 	cfg["CONNECT_PORT"] = envOr("CONNECT_PORT", "8443")
 	return cfg
+}
+
+
+func (a *App) GetAllConfig() map[string]interface{} {
+	result := a.fetchFromAdmin("/config")
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	result["PROXY_PORT"] = envOr("PROXY_PORT", "8080")
+	result["ADMIN_PORT"] = envOr("ADMIN_PORT", "8090")
+	result["TLS_PORT"] = envOr("TLS_PORT", "8444")
+	result["CONNECT_PORT"] = envOr("CONNECT_PORT", "8443")
+	return result
+}
+
+func (a *App) SaveConfigViaAdmin(cfg map[string]interface{}) error {
+	a.SaveConfig(cfg)
+	cfg2 := a.loadConfig()
+	adminPort := getCfgStr(cfg2, "ADMIN_PORT", "8090")
+	data, _ := json.Marshal(cfg)
+	url := fmt.Sprintf("http://127.0.0.1:%s/config", adminPort)
+	_, err := http.Post(url, "application/json", strings.NewReader(string(data)))
+	return err
 }
 
 func (a *App) GetConfig() map[string]interface{} {
@@ -278,7 +310,7 @@ func (a *App) GetEnvVars(mode string) string {
 
 // ── 代理开关 ──────────────────────────────────────────────
 
-func (a *App) GetProxySwitchStatus() map[string]bool {
+func (a *App) GetProxySwitchStatus() map[string]interface{} {
 	return a.fetchFromAdmin("/proxy-status")
 }
 
@@ -396,17 +428,17 @@ func envOr(key, fallback string) string {
 
 func createTrayMenu(app *App) *application.Menu {
 	menu := application.NewMenu()
-	menu.Add("显示窗口", func() {
+	menu.Add("显示窗口").OnClick(func(_ *application.Context) {
 		// Wails v3 自动处理
 	})
-	menu.Add("启动代理", func() {
+	menu.Add("启动代理").OnClick(func(_ *application.Context) {
 		app.StartProxy()
 	})
-	menu.Add("停止代理", func() {
+	menu.Add("停止代理").OnClick(func(_ *application.Context) {
 		app.StopProxy()
 	})
-	menu.Separator()
-	menu.Add("退出", func() {
+	menu.AddSeparator()
+	menu.Add("退出").OnClick(func(_ *application.Context) {
 		app.StopProxy()
 		os.Exit(0)
 	})

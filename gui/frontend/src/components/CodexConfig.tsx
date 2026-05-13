@@ -32,10 +32,10 @@ export default function CodexConfig({ config, api, onConfigSaved }: Props) {
 
     try {
       await api.SaveConfig(payload)
-      showToast('Codex 配置已保存')
+      showToast('Codex Config saved')
       onConfigSaved()
     } catch {
-      showToast('保存失败', false)
+      showToast('Save failed', false)
     }
   }
 
@@ -54,8 +54,8 @@ export default function CodexConfig({ config, api, onConfigSaved }: Props) {
 
   const set = (key: string, value: any) => setForm({ ...form, [key]: value })
 
-  const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => {
-    const [collapsed, setCollapsed] = useState(false)
+  const Section: React.FC<{ title: string; children: React.ReactNode; defaultCollapsed?: boolean }> = ({ title, children, defaultCollapsed }) => {
+    const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false)
     return (
       <div className="card">
         <h2 className={collapsed ? 'collapsed' : ''} onClick={() => setCollapsed(!collapsed)}>
@@ -70,23 +70,23 @@ export default function CodexConfig({ config, api, onConfigSaved }: Props) {
 
   return (
     <>
-      <Section title="上游连接">
+      <Section title="Upstream Connection">
         <div className="row">
           <label>API Key</label>
           <input type="password" value={form.deepseek_key || ''} onChange={e => set('deepseek_key', e.target.value)} placeholder="sk-..." autoComplete="off" />
-          <span className="hint">Codex 和 Claude 共用此 Key</span>
+          <span className="hint">Shared by Codex and Claude</span>
         </div>
         <div className="row">
           <label>Base URL</label>
           <input type="text" value={form.deepseek_base || ''} onChange={e => set('deepseek_base', e.target.value)} placeholder="https://api.deepseek.com" />
         </div>
         <div className="row">
-          <label>默认模型</label>
+          <label>Default Model</label>
           <input type="text" value={form.default_model || ''} onChange={e => set('default_model', e.target.value)} placeholder="deepseek-v4-pro" />
         </div>
       </Section>
 
-      <Section title="模型映射">
+      <Section title="Model Mapping">
         {modelMapping.map(([k, v], i) => (
           <div className="model-row" key={i}>
             <input placeholder="OpenAI model (e.g. gpt-5.5)" value={k} onChange={e => updateModelRow(i, 'k', e.target.value)} />
@@ -94,12 +94,12 @@ export default function CodexConfig({ config, api, onConfigSaved }: Props) {
             <button onClick={() => removeModelRow(i)}>X</button>
           </div>
         ))}
-        <button id="add-model" onClick={addModelRow}>+ 添加映射</button>
+        <button id="add-model" onClick={addModelRow}>+ Add Mapping</button>
       </Section>
 
-      <Section title="生成参数">
+      <Section title="Generation Params">
         <div className="row">
-          <label>推理强度</label>
+          <label>Reasoning Effort</label>
           <select value={form.reasoning_effort || ''} onChange={e => set('reasoning_effort', e.target.value || null)}>
             <option value="">(由 DeepSeek 决定)</option>
             <option value="min">min</option>
@@ -110,15 +110,15 @@ export default function CodexConfig({ config, api, onConfigSaved }: Props) {
           </select>
         </div>
         <div className="row">
-          <label>上下文窗口</label>
+          <label>Context Window</label>
           <input type="number" min={1024} max={10000000} step={1024} value={form.max_position_embeddings || 1000000} onChange={e => set('max_position_embeddings', parseInt(e.target.value))} />
         </div>
         <div className="row">
-          <label>最大输出 Tokens</label>
+          <label>Max Output Tokens</label>
           <input type="number" min={1} max={131072} value={form.max_output_tokens || ''} onChange={e => set('max_output_tokens', parseInt(e.target.value) || null)} placeholder="16384" />
         </div>
         <div className="row">
-          <label>温度</label>
+          <label>Temperature</label>
           <input type="number" step={0.01} min={0} max={2} value={form.temperature != null ? form.temperature : ''} onChange={e => set('temperature', e.target.value ? parseFloat(e.target.value) : null)} placeholder="(unset)" />
         </div>
         <div className="row">
@@ -127,24 +127,24 @@ export default function CodexConfig({ config, api, onConfigSaved }: Props) {
         </div>
       </Section>
 
-      <Section title="网页抓取">
+      <Section title="Web Fetch">
         <div className="row">
-          <label>最大 URL 数</label>
+          <label>Max URLs</label>
           <input type="number" min={0} max={50} value={form.web_fetch_max_urls ?? 5} onChange={e => set('web_fetch_max_urls', parseInt(e.target.value))} />
         </div>
         <div className="row">
-          <label>超时 (秒)</label>
+          <label>Timeout (s)</label>
           <input type="number" min={1} max={120} value={form.web_fetch_timeout ?? 10} onChange={e => set('web_fetch_timeout', parseInt(e.target.value))} />
         </div>
         <div className="row">
-          <label>最大响应体 (字节)</label>
+          <label>Max Body (bytes)</label>
           <input type="number" min={1000} max={1000000} value={form.web_fetch_max_body ?? 80000} onChange={e => set('web_fetch_max_body', parseInt(e.target.value))} />
         </div>
       </Section>
 
-      <Section title="推理缓存">
+      <Section title="Reasoning Cache">
         <div className="row">
-          <label>启用缓存</label>
+          <label>Enable Cache</label>
           <label className="toggle">
             <input type="checkbox" checked={!!form.enable_reasoning_cache} onChange={e => set('enable_reasoning_cache', e.target.checked)} />
             <span className="slider" />
@@ -157,8 +157,8 @@ export default function CodexConfig({ config, api, onConfigSaved }: Props) {
       </Section>
 
       <div className="btn-row">
-        <button className="btn btn-primary" onClick={handleSave}>保存 Codex 配置</button>
-        <button className="btn btn-secondary" onClick={onConfigSaved}>重新加载</button>
+        <button className="btn btn-primary" onClick={handleSave}>Save Codex Config</button>
+        <button className="btn btn-secondary" onClick={onConfigSaved}>Reload</button>
       </div>
     </>
   )

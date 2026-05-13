@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --bg: #f6f8fa;
   --fg: #1f2328;
   --border: #d0d7de;
@@ -146,7 +146,7 @@ body {
 }
 
 #right {
-  width: 360px;
+  width: 320px;
   flex-shrink: 0;
   overflow-y: auto;
 }
@@ -473,4 +473,11 @@ body {
 #toast.err {
   background: var(--danger);
   color: #fff;
+}
+
+/* overview full-width layout */
+#left.full-width {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
 }
