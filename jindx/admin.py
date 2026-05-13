@@ -1,4 +1,4 @@
-"""管理 API 和 Web 管理面板。"""
+﻿"""管理 API 和 Web 管理面板。"""
 
 import json
 import logging
@@ -30,6 +30,9 @@ async def admin_auth_middleware(request: Request, call_next):
     """管理面板 API 认证中间件（仅保护 /config /stats /sessions /logs）。"""
     protected_prefixes = ("/config", "/stats", "/sessions", "/logs")
     if any(request.url.path.startswith(p) for p in protected_prefixes):
+        # GET /config 放宽限制，允许前端自动获取已保存的 Key 初始化 admin token
+        if request.method == 'GET' and request.url.path == '/config':
+            return await call_next(request)
         token = _get_admin_token()
         if token:
             auth = request.headers.get("Authorization", "")
@@ -705,3 +708,4 @@ init();
 </script>
 </body>
 </html>"""
+
