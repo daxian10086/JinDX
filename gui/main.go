@@ -1,51 +1,78 @@
-package main
+﻿package main
 
 import (
 	"embed"
+	"io/fs"
 	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-//go:embed proxy-backend.exe
-var proxyExe []byte
+//go:embed all:frontend/dist
+var frontendAssets embed.FS
 
 func main() {
 	app := NewApp()
 
-	// 释放内嵌的 Python 代理
-	if err := extractProxyExe(); err != nil {
-		log.Printf("WARNING: 无法释放代理 exe: %v", err)
+	if proxyExe != nil && len(proxyExe) > 0 {
+		if err := releaseProxyExe(); err != nil {
+			log.Printf("WARNING: cannot release proxy exe: %v", err)
+		}
+	}
+
+	assetFS, err := fs.Sub(frontendAssets, "frontend/dist")
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	wailsApp := application.New(application.Options{
 		Name:        "JinDX Proxy",
 		Description: "DeepSeek API Proxy",
-		Width:       960,
-		Height:      720,
-		MinWidth:    800,
-		MinHeight:   600,
-		Icon:        nil,
-		Bind: []interface{}{
-			app,
+		Assets: application.AssetOptions{
+			Handler: application.BundledAssetFileServer(assetFS),
 		},
 	})
 
-	// 系统托盘
-	wailsApp.NewSystemTray().
-		SetTitle("JinDX Proxy").
-		SetIcon(nil).
-		SetMenu(createTrayMenu(app))
+	wailsApp.RegisterService(application.NewService(app))
 
-	// 窗口关闭时隐藏到托盘
-	wailsApp.OnWindowClose(func() bool {
-		return false // 默认行为关闭窗口，托盘始终可见
+	// Create main window — InitiallyHidden=false 让窗口启动时立即显示在前台
+	window := application.NewWindow(application.WebviewWindowOptions{
+		Name:            "main",
+		Title:           "JinDX Proxy Manager",
+		Width:           960,
+		Height:          720,
+		MinWidth:        800,
+		MinHeight:       600,
+		InitiallyHidden: false,
+		Windows: application.WindowsWindow{
+			HiddenOnTaskbar: false,
+		},
 	})
 
-	wailsApp.NewWebviewWindowWithOptions(application.WebviewWindowOptions{
-		Title:  "JinDX Proxy Manager",
-		Width:  960,
-		Height: 720,
+	// Close to tray: hide instead of closing
+	window.OnWindowEvent(events.Common.WindowClosing, func(_ *application.WindowEvent) {
+		window.Hide()
+	})
+
+	// System tray
+	tray := wailsApp.SystemTray.New()
+	tray.SetTooltip("JinDX Proxy")
+	tray.SetMenu(createTrayMenu(app))
+	tray.OnClick(func() {
+		if window.IsVisible() {
+			window.Hide()
+		} else {
+			window.Show()
+			window.Focus()
+		}
+	})
+	tray.Show()
+
+	// WebView 加载完成后聚焦到前台
+	window.OnWindowEvent(events.Windows.WebViewNavigationCompleted, func(_ *application.WindowEvent) {
+		window.Show()
+		window.Focus()
 	})
 
 	if err := wailsApp.Run(); err != nil {
@@ -53,9 +80,9 @@ func main() {
 	}
 }
 
-func extractProxyExe() error {
+func releaseProxyExe() error {
 	if len(proxyExe) == 0 {
-		return nil // 开发模式，代理由外部启动
+		return nil
 	}
 	path, err := getProxyExePath()
 	if err != nil {
