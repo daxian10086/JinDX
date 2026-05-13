@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import config, DEFAULT_MODEL
 from .stats import (
-    record_request, record_error, record_upstream_error, log_error,
+    record_request, record_codex_request, record_claude_request, record_error, record_upstream_error, log_error,
     increment_active_streams, decrement_active_streams,
 )
 from .protocol import (
@@ -83,7 +83,7 @@ def _maybe_map_model(name: str) -> str:
 # ── Chat Completions 透传（透明通道，不做协议翻译）──────────────────
 
 async def chat_completions(request: Request):
-    record_request()
+    record_codex_request()
     try:
         body = await request.json()
     except json.JSONDecodeError:
@@ -133,7 +133,7 @@ async def _stream_chat(body: dict, auth_headers: dict):
 # ── HTTP Responses 端点 ─────────────────────────────────────────────
 
 async def responses_http(request: Request):
-    record_request()
+    record_codex_request()
     try:
         body = await request.json()
     except json.JSONDecodeError:

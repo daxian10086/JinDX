@@ -197,6 +197,7 @@ if ($isAdmin) {
         "127.0.0.1 auth.openai.com",
         "127.0.0.1 chat.openai.com",
         "127.0.0.1 ab.chatgpt.com"
+        "127.0.0.1 api.anthropic.com"
     )
 
     $hostsContent = Get-Content $hostsPath -Raw -ErrorAction SilentlyContinue

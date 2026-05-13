@@ -1,9 +1,7 @@
-import { useEffect, useState, useCallback } from 'react'
+﻿import { useEffect, useState, useCallback } from 'react'
 import { showToast } from '../App'
 
-interface Props {
-  api: any
-}
+interface Props { api: any }
 
 export default function Dashboard({ api }: Props) {
   const [stats, setStats] = useState<Record<string, any>>({})
@@ -13,38 +11,23 @@ export default function Dashboard({ api }: Props) {
 
   const refresh = useCallback(async () => {
     if (!api) return
-    try { const s = await api.GetStats(); setStats(s) } catch { /* */ }
-    try { const ss = await api.GetSystemStatus(); setSystemStatus(ss) } catch { /* */ }
-    try { const sw = await api.GetProxySwitchStatus(); setSwitchStatus(sw) } catch { /* */ }
+    try { setStats(await api.GetStats()) } catch { /* */ }
+    try { setSystemStatus(await api.GetSystemStatus()) } catch { /* */ }
+    try { setSwitchStatus(await api.GetProxySwitchStatus()) } catch { /* */ }
   }, [api])
 
-  useEffect(() => {
-    refresh()
-    const timer = setInterval(refresh, 5000)
-    return () => clearInterval(timer)
-  }, [refresh])
+  useEffect(() => { refresh(); const t = setInterval(refresh, 5000); return () => clearInterval(t) }, [refresh])
 
   const handleSwitchToggle = async (which: string, enabled: boolean) => {
     if (!api) return
-    try {
-      await api.ToggleProxySwitch(which, enabled)
-      refresh()
-      showToast(`${which === 'codex' ? 'Codex' : 'Claude'} proxy ${enabled ? 'started' : 'stopped'}`)
-    } catch {
-      showToast('Operation failed', false)
-    }
+    try { await api.ToggleProxySwitch(which, enabled); refresh(); showToast(`${which === 'codex' ? 'Codex' : 'Claude'} ${enabled ? '已开启' : '已关闭'}`) }
+    catch { showToast('操作失败', false) }
   }
 
   const handleCopyEnv = async (mode: 'codex' | 'claude') => {
     if (!api) return
-    try {
-      const text = await api.GetEnvVars(mode)
-      setEnvText(text)
-      await navigator.clipboard.writeText(text)
-      showToast('Copied to clipboard')
-    } catch {
-      showToast('Copy failed', false)
-    }
+    try { const t = await api.GetEnvVars(mode); setEnvText(t); await navigator.clipboard.writeText(t); showToast('已复制') }
+    catch { showToast('复制失败', false) }
   }
 
   const fmtUptime = (sec: number) => {
@@ -55,90 +38,51 @@ export default function Dashboard({ api }: Props) {
     return `${Math.floor(sec / 86400)}d ${Math.floor((sec % 86400) / 3600)}h`
   }
 
-  return (
-    <>
+  return (<>
+    <div className="card">
+      <h2>实时统计</h2>
+      <div className="stat-grid">
+        <div className="stat-item"><div className="stat-value">{fmtUptime(stats.uptime || 0)}</div><div className="stat-label">运行时间</div></div>
+        <div className="stat-item"><div className="stat-value">{stats.total_requests ?? '--'}</div><div className="stat-label">API 请求数</div></div>
+        <div className="stat-item"><div className="stat-value">{stats.active_streams ?? 0}</div><div className="stat-label">活跃流数</div></div>
+        <div className="stat-item"><div className={`stat-value ${(stats.error_rate || 0) > 10 ? 'danger' : (stats.error_rate || 0) > 3 ? 'orange' : ''}`}>{stats.error_rate ?? '--'}%</div><div className="stat-label">错误率</div></div>
+        <div className="stat-item"><div className={`stat-value ${(stats.cache_hit_rate || 0) >= 70 ? 'green' : ''}`}>{stats.cache_hit_rate ?? '--'}%</div><div className="stat-label">缓存命中率</div></div>
+        <div className="stat-item"><div className="stat-value">{stats.total_errors ?? 0}</div><div className="stat-label">错误总数</div></div>
+      </div>
+    </div>
+
+    <div className="card">
+      <h2>系统状态</h2>
+      <div style={{ fontSize: 12 }}>
+        <div style={{ marginBottom: 5 }}><span className={`status-dot ${systemStatus.deepseek === 'connected' ? 'up' : 'down'}`} />DeepSeek API: {systemStatus.deepseek || '--'}</div>
+        <div><span className={`status-dot ${systemStatus.redis === 'connected' ? 'up' : 'down'}`} />缓存后端: {systemStatus.redis || '文件'}</div>
+      </div>
+    </div>
+
+    <div className="card">
+      <h2>终端环境变量</h2>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+        <label className="toggle"><input type="checkbox" checked={!!switchStatus.codex_enabled} onChange={e => handleSwitchToggle('codex', e.target.checked)} /><span className="slider" /></label>
+        <span style={{ fontSize: 12, fontWeight: 500 }}>Codex</span>
+        <label className="toggle"><input type="checkbox" checked={!!switchStatus.claude_enabled} onChange={e => handleSwitchToggle('claude', e.target.checked)} /><span className="slider" /></label>
+        <span style={{ fontSize: 12, fontWeight: 500 }}>Claude</span>
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+        <button className="btn copy-btn" onClick={() => handleCopyEnv('codex')}>复制 Codex</button>
+        <button className="btn copy-btn" onClick={() => handleCopyEnv('claude')}>复制 Claude</button>
+      </div>
+      {envText && <div className="env-box">{envText}</div>}
+    </div>
+
+    {stats.top_upstream_errors && (stats.top_upstream_errors as any[]).length > 0 && (
       <div className="card">
-        <h2>Realtime Stats</h2>
-        <div className="stat-grid">
-          <div className="stat-item">
-            <div className="stat-value">{fmtUptime(stats.uptime || 0)}</div>
-            <div className="stat-label">Uptime</div>
-          </div>
-          <div className="stat-item">
-            <div className="stat-value" style={{ color: 'var(--accent)' }}>{stats.total_requests ?? '--'}</div>
-            <div className="stat-label">API Requests</div>
-          </div>
-          <div className="stat-item">
-            <div className="stat-value">{stats.active_streams ?? 0}</div>
-            <div className="stat-label">Active Streams</div>
-          </div>
-          <div className="stat-item">
-            <div className={`stat-value ${(stats.error_rate || 0) > 10 ? 'danger' : (stats.error_rate || 0) > 3 ? 'orange' : ''}`}>
-              {stats.error_rate ?? '--'}%
-            </div>
-            <div className="stat-label">Error Rate</div>
-          </div>
-          <div className="stat-item">
-            <div className={`stat-value ${(stats.cache_hit_rate || 0) >= 70 ? 'green' : ''}`}>
-              {stats.cache_hit_rate ?? '--'}%
-            </div>
-            <div className="stat-label">Cache Hit</div>
-          </div>
-          <div className="stat-item">
-            <div className="stat-value" style={{ color: 'var(--accent)' }}>{stats.total_errors ?? 0}</div>
-            <div className="stat-label">Total Errors</div>
-          </div>
+        <h2>上游错误</h2>
+        <div style={{ fontSize: 11, color: 'var(--muted)', maxHeight: 120, overflowY: 'auto' }}>
+          {(stats.top_upstream_errors as any[]).map((e: any, i: number) => (
+            <div key={i} style={{ marginBottom: 3 }}><span style={{ color: 'var(--danger)', fontWeight: 600 }}>{e.count}x</span> {String(e.msg || '').substring(0, 100)}</div>
+          ))}
         </div>
       </div>
-
-      <div className="card">
-        <h2>System Status</h2>
-        <div style={{ fontSize: 12 }}>
-          <div style={{ marginBottom: 5 }}>
-            <span className={`status-dot ${systemStatus.deepseek === 'connected' ? 'up' : 'down'}`} />
-            DeepSeek API: {systemStatus.deepseek || '--'}
-          </div>
-          <div>
-            <span className={`status-dot ${systemStatus.redis === 'connected' ? 'up' : 'down'}`} />
-            Cache Backend: {systemStatus.redis || 'file'}
-          </div>
-        </div>
-      </div>
-
-      <div className="card">
-        <h2>Terminal Env Vars</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-          <label className="toggle" style={{ flexShrink: 0 }}>
-            <input type="checkbox" checked={!!switchStatus.codex_enabled} onChange={e => handleSwitchToggle('codex', e.target.checked)} />
-            <span className="slider" />
-          </label>
-          <span style={{ fontSize: 12 }}>Codex</span>
-          <label className="toggle" style={{ flexShrink: 0 }}>
-            <input type="checkbox" checked={!!switchStatus.claude_enabled} onChange={e => handleSwitchToggle('claude', e.target.checked)} />
-            <span className="slider" />
-          </label>
-          <span style={{ fontSize: 12 }}>Claude</span>
-        </div>
-        <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-          <button className="btn-copy" style={{ flex: 1, fontSize: 10, padding: '3px 6px' }} onClick={() => handleCopyEnv('codex')}>Copy Codex</button>
-          <button className="btn-copy" style={{ flex: 1, fontSize: 10, padding: '3px 6px' }} onClick={() => handleCopyEnv('claude')}>Copy Claude</button>
-        </div>
-        {envText && <div className="env-box" style={{ maxHeight: 80, overflowY: 'auto' }}>{envText}</div>}
-      </div>
-
-      {stats.top_upstream_errors && (stats.top_upstream_errors as any[]).length > 0 && (
-        <div className="card">
-          <h2>Upstream Errors</h2>
-          <div style={{ fontSize: 11, color: 'var(--muted)', maxHeight: 120, overflowY: 'auto' }}>
-            {(stats.top_upstream_errors as any[]).map((e: any, i: number) => (
-              <div key={i} style={{ marginBottom: 3 }}>
-                <span style={{ color: 'var(--danger)', fontWeight: 600 }}>{e.count}x</span>{' '}
-                {String(e.msg || '').substring(0, 100)}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </>
-  )
+    )}
+  </>)
 }

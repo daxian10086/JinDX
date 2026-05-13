@@ -16,101 +16,69 @@ export default function App() {
 
   const refreshStatus = useCallback(async () => {
     if (!api) return
-    try {
-      const s = await api.GetProxyStatus()
-      setProxyStatus(s)
-    } catch { /* */ }
+    try { setProxyStatus(await api.GetProxyStatus()) } catch { /* */ }
   }, [api])
 
   const loadConfig = useCallback(async () => {
     if (!api) return
-    try {
-      const cfg = await api.GetConfig()
-      setConfig(cfg)
-    } catch { /* */ }
+    try { setConfig(await api.GetConfig()) } catch { /* */ }
   }, [api])
 
   useEffect(() => {
-    refreshStatus()
-    loadConfig()
-    const timer = setInterval(refreshStatus, 5000)
-    return () => clearInterval(timer)
+    refreshStatus(); loadConfig()
+    const t = setInterval(refreshStatus, 5000)
+    return () => clearInterval(t)
   }, [refreshStatus, loadConfig])
 
-  // Warn if no API key configured on first load
   useEffect(() => {
+    if (!api) { showToast('Wails 桥接未就绪，请重启应用', false); return }
     if (!config || !Object.keys(config).length) return
     const key = config.deepseek_key || ''
-    if (!key || key === 'sk-your-deepseek-api-key' || !key.startsWith('sk-')) {
-      showToast('No DeepSeek API Key configured. Go to Codex Proxy tab.', false)
-    }
-  }, [config])
-
-  // Check Wails bridge availability
-  useEffect(() => {
-    if (!api) {
-      showToast('Wails bridge not ready. Restart GUI.', false)
-    }
-  }, [api])
+    if (!key || key === 'sk-your-deepseek-api-key' || !key.startsWith('sk-'))
+      showToast('未配置 API Key，请前往 Codex 或 Claude 标签页设置', false)
+  }, [config, api])
 
   const handleProxyAction = async (action: 'start' | 'stop' | 'restart') => {
     if (!api) return
     try {
       if (action === 'start') {
-        const result = await api.StartProxy()
-        if (result === 'stopped') {
-          showToast('Start failed', false)
-          return
-        }
-      }
-      else if (action === 'stop') await api.StopProxy()
-      else if (action === 'restart') {
-        await api.StopProxy()
-        await new Promise(r => setTimeout(r, 1000))
-        await api.StartProxy()
-      }
+        const r = await api.StartProxy()
+        if (r === 'stopped') { showToast('启动失败', false); return }
+      } else if (action === 'stop') await api.StopProxy()
+      else if (action === 'restart') { await api.StopProxy(); await new Promise(r => setTimeout(r, 1000)); await api.StartProxy() }
       refreshStatus()
-      if (action === 'start') showToast('?????')
-      else if (action === 'stop') showToast('?????')
-    } catch (e: any) {
-      showToast('????: ' + (e?.message || e), false)
-    }
+      showToast(action === 'start' ? '代理已启动' : action === 'stop' ? '代理已停止' : '代理已重启')
+    } catch (e: any) { showToast('操作失败: ' + (e?.message || e), false) }
   }
 
-  const tabDefs: { id: Tab; label: string }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'codex', label: 'Codex Proxy' },
-    { id: 'claude', label: 'Claude Code' },
-    { id: 'logs', label: 'Logs' },
-    { id: 'settings', label: 'Settings' },
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'overview', label: '概览' },
+    { id: 'codex', label: 'Codex 代理' },
+    { id: 'claude', label: 'Claude 代理' },
+    { id: 'logs', label: '日志' },
+    { id: 'settings', label: '设置' },
   ]
+
+  const statusText = proxyStatus === 'running' ? '运行中' : proxyStatus === 'starting' ? '启动中...' : '已停止'
 
   return (
     <>
       <div id="topbar">
         <h1>
-          <span className={`dot ${proxyStatus === 'running' ? '' : proxyStatus === 'starting' ? 'starting' : 'stopped'}`} />
+          <span className={`dot ${proxyStatus}`} />
           JinDX Proxy
         </h1>
         <div className="topbar-right">
-          <span className="stat-label" style={{ color: proxyStatus === 'running' ? 'var(--green)' : proxyStatus === 'starting' ? 'var(--orange)' : 'var(--muted)' }}>
-            {proxyStatus === 'running' ? 'Running' : proxyStatus === 'starting' ? 'Starting...' : 'Stopped'}
-          </span>
-          <button className="primary" onClick={() => handleProxyAction('start')}>Start</button>
-          <button className="danger" onClick={() => handleProxyAction('stop')}>Stop</button>
-          <button onClick={() => handleProxyAction('restart')}>Restart</button>
+          <span className={`status-tag ${proxyStatus !== 'running' ? 'stopped' : ''}`}>{statusText}</span>
+          <button className="primary" onClick={() => handleProxyAction('start')}>启动</button>
+          <button className="danger" onClick={() => handleProxyAction('stop')}>停止</button>
+          <button onClick={() => handleProxyAction('restart')}>重启</button>
         </div>
       </div>
 
       <div id="tab-bar">
-        {tabDefs.map(t => (
-          <button
-            key={t.id}
-            className={`tab-btn ${activeTab === t.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(t.id)}
-          >
-            {t.label}
-          </button>
+        {tabs.map(t => (
+          <button key={t.id} className={`tab-btn ${activeTab === t.id ? 'active' : ''}`} onClick={() => setActiveTab(t.id)}>{t.label}</button>
         ))}
       </div>
 
@@ -123,22 +91,17 @@ export default function App() {
           {activeTab === 'settings' && <Settings api={api} config={config} />}
         </div>
         {(activeTab === 'codex' || activeTab === 'claude') && (
-          <div id="right">
-            <Dashboard api={api} />
-          </div>
+          <div id="right"><Dashboard api={api} /></div>
         )}
       </div>
-
       <div id="toast" />
     </>
   )
 }
 
-// Toast helper (global)
 export function showToast(msg: string, ok = true) {
   const el = document.getElementById('toast')
   if (!el) return
-  el.textContent = msg
-  el.className = (ok ? 'ok' : 'err') + ' show'
-  setTimeout(() => el.classList.remove('show'), 2200)
+  el.textContent = msg; el.className = (ok ? 'ok' : 'err') + ' show'
+  setTimeout(() => el.classList.remove('show'), 2500)
 }

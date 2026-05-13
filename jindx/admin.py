@@ -320,6 +320,8 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
     <div class="stat-grid">
       <div class="stat-item"><div class="stat-value" id="stat-uptime">--</div><div class="stat-label" data-i18n-zh="运行时间" data-i18n-en="Uptime">运行时间</div></div>
       <div class="stat-item"><div class="stat-value" id="stat-requests">--</div><div class="stat-label" data-i18n-zh="API 请求数" data-i18n-en="API Requests">API 请求数</div></div>
+      <div class="stat-item"><div class="stat-value blue" id="stat-codex-requests">--</div><div class="stat-label">Codex</div></div>
+      <div class="stat-item"><div class="stat-value orange" id="stat-claude-requests">--</div><div class="stat-label">Claude</div></div>
       <div class="stat-item"><div class="stat-value" id="stat-streams">0</div><div class="stat-label" data-i18n-zh="活跃流" data-i18n-en="Active Streams">活跃流</div></div>
       <div class="stat-item"><div class="stat-value" id="stat-error-rate">--</div><div class="stat-label" data-i18n-zh="API 错误率" data-i18n-en="API Error Rate">API 错误率</div></div>
       <div class="stat-item"><div class="stat-value green" id="stat-cache-hit">--</div><div class="stat-label" data-i18n-zh="缓存命中率" data-i18n-en="Cache Hit">缓存命中率</div></div>
@@ -626,6 +628,8 @@ async function refreshStats(){
     var r=await fetch('/stats',{headers:authHeaders()}), s=await r.json();
     document.getElementById('stat-uptime').textContent=fmtUptime(s.uptime);
     document.getElementById('stat-requests').textContent=s.total_requests;
+    document.getElementById('stat-codex-requests').textContent=s.codex_requests||0;
+    document.getElementById('stat-claude-requests').textContent=s.claude_requests||0;
     document.getElementById('stat-streams').textContent=s.active_streams;
     var er=document.getElementById('stat-error-rate');
     er.textContent=s.error_rate+'%';

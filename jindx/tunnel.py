@@ -23,6 +23,7 @@ _SAN_DOMAINS = [
     "chat.openai.com",
     "chatgpt.com",
     "ab.chatgpt.com",
+    "api.anthropic.com",
     "api.deepseek.com",
 ]
 

@@ -249,6 +249,48 @@ def write_codex_config_toml(*, force: bool = False) -> None:
 # 确保 Claude Code 始终连接到本地代理。Auth Token 用占位符，
 # 实际 API Key 由 ANTHROPIC_API_KEY 环境变量注入，实现自动脱敏。
 
+
+# ---- Claude hosts ----------
+_CLAUDE_HOSTS = [
+    ("127.0.0.1", "api.anthropic.com"),
+]
+
+def _ensure_claude_hosts_hijack() -> None:
+    """Auto-add api.anthropic.com -> 127.0.0.1 to Windows hosts file."""
+    if os.name != "nt":
+        return
+    hosts_path = r"C:\Windows\System32\drivers\etc\hosts"
+    try:
+        with open(hosts_path, "r", encoding="utf-8") as f:
+            existing = f.read()
+    except Exception:
+        existing = ""
+    changed = False
+    entries_to_add = []
+    for ip, domain in _CLAUDE_HOSTS:
+        line = f"{ip} {domain}"
+        if line not in existing:
+            entries_to_add.append(line)
+            changed = True
+    if not changed:
+        logger.debug("Claude hosts hijack already in place")
+        return
+    try:
+        with open(hosts_path, "a", encoding="utf-8") as f:
+            for entry in entries_to_add:
+                f.write(f"\n{entry}")
+        logger.info(
+            "Claude hosts hijack written: "
+            + ", ".join(entries_to_add)
+        )
+    except PermissionError:
+        logger.warning(
+            "Cannot write hosts file (need admin). "
+            "Run start.ps1 as admin or add manually: "
+            + ", ".join(entries_to_add)
+        )
+
+
 def write_claude_settings_json(*, force: bool = False) -> None:
     """在代理首次启动时写入 Claude Code settings.json（脱敏）。
 
@@ -288,6 +330,7 @@ def write_claude_settings_json(*, force: bool = False) -> None:
         f"Claude settings {'re-' if force and settings_path.exists() else ''}written to {settings_path} "
         f"(auth: via ANTHROPIC_API_KEY env, model: {settings['env']['ANTHROPIC_MODEL']})"
     )
+    _ensure_claude_hosts_hijack()
 
 
 # ── 配置清除 & 状态查询 ─────────────────────────────────────────────

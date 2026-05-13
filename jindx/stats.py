@@ -10,6 +10,8 @@ from threading import Lock
 _stats: dict = {
     "start_time": time.time(),
     "total_requests": 0,
+    "codex_requests": 0,
+    "claude_requests": 0,
     "active_streams": 0,
     "errors_by_code": {},
     "cache_hits": 0,
@@ -27,6 +29,18 @@ _MAX_LOG_BUFFER = 200
 def record_request():
     with _stats_lock:
         _stats["total_requests"] += 1
+
+
+def record_codex_request():
+    with _stats_lock:
+        _stats["total_requests"] += 1
+        _stats["codex_requests"] += 1
+
+
+def record_claude_request():
+    with _stats_lock:
+        _stats["total_requests"] += 1
+        _stats["claude_requests"] += 1
 
 
 def record_error(code: int):
@@ -83,6 +97,8 @@ def get_stats() -> dict:
         return {
             "uptime": int(time.time() - _stats["start_time"]),
             "total_requests": total,
+            "codex_requests": _stats["codex_requests"],
+            "claude_requests": _stats["claude_requests"],
             "active_streams": _stats["active_streams"],
             "errors_by_code": dict(top_errors),
             "error_rate": error_rate,

@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['proxy.py'],
+    ['D:\\JinDX\\proxy.py'],
     pathex=[],
     binaries=[],
     datas=[('jindx', 'jindx')],
@@ -35,4 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='NONE',
 )
