@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from collections import OrderedDict
 from pathlib import Path
 from threading import Lock
@@ -170,8 +171,9 @@ def get_session_id(data: dict) -> str:
     elif isinstance(inp, str):
         first_user_msg = inp
 
+    # ?? add randomness to avoid session collision ??
     inst_hash = hashlib.sha256(instructions.encode()).hexdigest()[:8]
-    seed = f"{inst_hash}||{first_user_msg}"[:1000]
+    seed = f"{inst_hash}||{first_user_msg}||{uuid.uuid4().hex[:8]}"[:1000]
     return hashlib.sha256(seed.encode()).hexdigest()[:16]
 
 
