@@ -149,10 +149,10 @@ if __name__ == "__main__":
         # print console URLs
         print()
         print("=" * 56)
-        print("  JinDX Proxy | Console:")
-        print(f"    http://127.0.0.1:{ADMIN_PORT}        | Admin Panel")
-        print(f"    http://127.0.0.1:{PROXY_PORT}        | API Proxy")
-        print(f"    https://127.0.0.1:{TLS_PORT}        | TLS Proxy")
+        print("  JinDX Proxy | ????")
+        print(f"    http://127.0.0.1:{ADMIN_PORT}        ????")
+        print(f"    http://127.0.0.1:{PROXY_PORT}        API ??")
+        print(f"    https://127.0.0.1:{TLS_PORT}        TLS ??")
         print("=" * 56)
         print()
 
