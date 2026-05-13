@@ -146,6 +146,16 @@ if __name__ == "__main__":
 
         connect_task = asyncio.create_task(_run_connect_server())
 
+        # print console URLs
+        print()
+        print("=" * 56)
+        print("  JinDX Proxy | Console:")
+        print(f"    http://127.0.0.1:{ADMIN_PORT}        | Admin Panel")
+        print(f"    http://127.0.0.1:{PROXY_PORT}        | API Proxy")
+        print(f"    https://127.0.0.1:{TLS_PORT}        | TLS Proxy")
+        print("=" * 56)
+        print()
+
         # 提前绑定 socket，避免 uvicorn 0.46.0 在 asyncio.gather 并发时的自冲突
         import socket as _socket
 
