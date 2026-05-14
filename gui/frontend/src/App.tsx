@@ -1,28 +1,70 @@
-ï»¿import { useState, useEffect, useCallback } from 'react'
-import Dashboard from './components/Dashboard'
+import { useState, useEffect, useCallback, createContext, useContext } from 'react'
 import CodexConfig from './components/CodexConfig'
 import ClaudeConfig from './components/ClaudeConfig'
-import LogViewer from './components/LogViewer'
 import Settings from './components/Settings'
+import RightPanel from './components/RightPanel'
+import { App as AppBindings } from './bindings/index.js'
 
-type Tab = 'overview' | 'codex' | 'claude' | 'logs' | 'settings'
+type Tab = 'codex' | 'claude' | 'settings'
+type Lang = 'zh' | 'en'
+
+const LANG_KEY = 'jindx_gui_lang'
+
+// i18n translations
+const TXT: Record<string, Record<Lang, string>> = {
+  title: { zh: 'JinDX ´úÀí¹ÜÀí', en: 'JinDX Proxy Manager' },
+  codex: { zh: 'Codex', en: 'Codex' },
+  claude: { zh: 'Claude', en: 'Claude' },
+  settings: { zh: 'Settings', en: 'Settings' },
+  port: { zh: '¶Ë¿Ú:', en: 'Port:' },
+  start: { zh: 'Æô¶¯', en: 'Start' },
+  stop: { zh: 'Í£Ö¹', en: 'Stop' },
+  restart: { zh: 'ÖØÆô', en: 'Restart' },
+  running: { zh: 'ÔËĞĞÖĞ', en: 'Running' },
+  starting: { zh: 'Æô¶¯ÖĞ...', en: 'Starting...' },
+  stopped: { zh: 'ÒÑÍ£Ö¹', en: 'Stopped' },
+  started: { zh: 'ÒÑÆô¶¯', en: 'Started' },
+  stoppedOk: { zh: 'ÒÑÍ£Ö¹', en: 'Stopped' },
+  restarted: { zh: 'ÒÑÖØÆô', en: 'Restarted' },
+  noKey: { zh: 'Î´ÅäÖÃ API Key', en: 'No API Key configured' },
+  error: { zh: '´íÎó', en: 'Error' },
+  langLabel: { zh: 'English', en: 'ÖĞÎÄ' },
+}
+
+export const t = (key: string): string => {
+  return TXT[key]?.[currentLang] ?? key
+}
+
+let currentLang: Lang = 'zh'
+
+export const setLang = (l: Lang) => { currentLang = l }
+
+export function useLang() {
+  const [lang, setLangState] = useState<Lang>(
+    () => (localStorage.getItem(LANG_KEY) as Lang) || 'zh'
+  )
+  useEffect(() => {
+    currentLang = lang
+    localStorage.setItem(LANG_KEY, lang)
+  }, [lang])
+  return { lang, setLang: setLangState }
+}
+
+export const LangContext = createContext<Lang>('zh')
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const [activeTab, setActiveTab] = useState<Tab>('codex')
   const [proxyStatus, setProxyStatus] = useState('stopped')
   const [config, setConfig] = useState<Record<string, any>>({})
-
-  const api = window.go?.main?.App
+  const { lang, setLang } = useLang()
 
   const refreshStatus = useCallback(async () => {
-    if (!api) return
-    try { setProxyStatus(await api.GetProxyStatus()) } catch { /* */ }
-  }, [api])
+    try { setProxyStatus(await AppBindings.GetProxyStatus() || 'stopped') } catch { /* */ }
+  }, [])
 
   const loadConfig = useCallback(async () => {
-    if (!api) return
-    try { setConfig(await api.GetConfig()) } catch { /* */ }
-  }, [api])
+    try { setConfig(await AppBindings.GetConfig() || {}) } catch { /* */ }
+  }, [])
 
   useEffect(() => {
     refreshStatus(); loadConfig()
@@ -31,71 +73,67 @@ export default function App() {
   }, [refreshStatus, loadConfig])
 
   useEffect(() => {
-    if (!api) { showToast('Wails æ¡¥æ¥æœªå°±ç»ªï¼Œè¯·é‡å¯åº”ç”¨', false); return }
     if (!config || !Object.keys(config).length) return
     const key = config.deepseek_key || ''
     if (!key || key === 'sk-your-deepseek-api-key' || !key.startsWith('sk-'))
-      showToast('æœªé…ç½® API Keyï¼Œè¯·å‰å¾€ Codex æˆ– Claude æ ‡ç­¾é¡µè®¾ç½®', false)
-  }, [config, api])
+      showToast(t('noKey'), false)
+  }, [config])
 
   const handleProxyAction = async (action: 'start' | 'stop' | 'restart') => {
-    if (!api) return
     try {
-      if (action === 'start') {
-        const r = await api.StartProxy()
-        if (r === 'stopped') { showToast('å¯åŠ¨å¤±è´¥', false); return }
-      } else if (action === 'stop') await api.StopProxy()
-      else if (action === 'restart') { await api.StopProxy(); await new Promise(r => setTimeout(r, 1000)); await api.StartProxy() }
+      if (action === 'start') await AppBindings.StartProxy()
+      else if (action === 'stop') await AppBindings.StopProxy()
+      else if (action === 'restart') { await AppBindings.StopProxy(); await new Promise(r => setTimeout(r, 1000)); await AppBindings.StartProxy() }
       refreshStatus()
-      showToast(action === 'start' ? 'ä»£ç†å·²å¯åŠ¨' : action === 'stop' ? 'ä»£ç†å·²åœæ­¢' : 'ä»£ç†å·²é‡å¯')
-    } catch (e: any) { showToast('æ“ä½œå¤±è´¥: ' + (e?.message || e), false) }
+      showToast(action === 'start' ? t('started') : action === 'stop' ? t('stoppedOk') : t('restarted'))
+    } catch (e: any) { showToast(t('error') + ': ' + (e?.message || e), false) }
   }
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'overview', label: 'æ¦‚è§ˆ' },
-    { id: 'codex', label: 'Codex ä»£ç†' },
-    { id: 'claude', label: 'Claude ä»£ç†' },
-    { id: 'logs', label: 'æ—¥å¿—' },
-    { id: 'settings', label: 'è®¾ç½®' },
+  const tabs: { id: Tab; key: string }[] = [
+    { id: 'codex', key: 'codex' },
+    { id: 'claude', key: 'claude' },
+    { id: 'settings', key: 'settings' },
   ]
 
-  const statusText = proxyStatus === 'running' ? 'è¿è¡Œä¸­' : proxyStatus === 'starting' ? 'å¯åŠ¨ä¸­...' : 'å·²åœæ­¢'
+  const statusText = proxyStatus === 'running' ? t('running') : proxyStatus === 'starting' ? t('starting') : t('stopped')
+  const adminPort = config.ADMIN_PORT || '8090'
 
   return (
-    <>
+    <LangContext.Provider value={lang}>
       <div id="topbar">
         <h1>
           <span className={`dot ${proxyStatus}`} />
-          JinDX Proxy
+          {t('title')}
         </h1>
         <div className="topbar-right">
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>{t('port')}</span>
+          <span style={{ fontSize: 12, color: 'var(--accent)', fontFamily: 'monospace' }}>:{adminPort}</span>
           <span className={`status-tag ${proxyStatus !== 'running' ? 'stopped' : ''}`}>{statusText}</span>
-          <button className="primary" onClick={() => handleProxyAction('start')}>å¯åŠ¨</button>
-          <button className="danger" onClick={() => handleProxyAction('stop')}>åœæ­¢</button>
-          <button onClick={() => handleProxyAction('restart')}>é‡å¯</button>
+          <button className="primary" onClick={() => handleProxyAction('start')}>{t('start')}</button>
+          <button className="danger" onClick={() => handleProxyAction('stop')}>{t('stop')}</button>
+          <button onClick={() => handleProxyAction('restart')}>{t('restart')}</button>
+          <button id="lang-btn" onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')} style={{ padding: '4px 12px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--input-bg)', color: 'var(--fg)', cursor: 'pointer', fontSize: 12 }}>{t('langLabel')}</button>
         </div>
       </div>
 
       <div id="tab-bar">
-        {tabs.map(t => (
-          <button key={t.id} className={`tab-btn ${activeTab === t.id ? 'active' : ''}`} onClick={() => setActiveTab(t.id)}>{t.label}</button>
+        {tabs.map(tab => (
+          <button key={tab.id} className={`tab-btn ${activeTab === tab.id ? 'active' : ''}`} onClick={() => setActiveTab(tab.id)}>{t(tab.key)}</button>
         ))}
       </div>
 
       <div id="main">
         <div id="left">
-          {activeTab === 'overview' && <Dashboard api={api} />}
-          {activeTab === 'codex' && <CodexConfig config={config} api={api} onConfigSaved={loadConfig} />}
-          {activeTab === 'claude' && <ClaudeConfig config={config} api={api} onConfigSaved={loadConfig} />}
-          {activeTab === 'logs' && <LogViewer api={api} />}
-          {activeTab === 'settings' && <Settings api={api} config={config} />}
+          {activeTab === 'codex' && <CodexConfig config={config} onConfigSaved={loadConfig} />}
+          {activeTab === 'claude' && <ClaudeConfig config={config} onConfigSaved={loadConfig} />}
+          {activeTab === 'settings' && <Settings config={config} />}
         </div>
-        {(activeTab === 'codex' || activeTab === 'claude') && (
-          <div id="right"><Dashboard api={api} /></div>
-        )}
+        <div id="right">
+          <RightPanel />
+        </div>
       </div>
       <div id="toast" />
-    </>
+    </LangContext.Provider>
   )
 }
 

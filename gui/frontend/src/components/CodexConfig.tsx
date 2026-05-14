@@ -1,11 +1,14 @@
-ï»¿import { useState, useEffect } from 'react'
-import { showToast } from '../App'
+import { useState, useEffect } from 'react'
+import { showToast, LangContext } from '../App'
+import { App as AppBindings } from '../bindings/index.js'
+import { useContext } from 'react'
 
-interface Props { config: Record<string, any>; api: any; onConfigSaved: () => void }
+interface Props { config: Record<string, any>; onConfigSaved: () => void }
 
-export default function CodexConfig({ config, api, onConfigSaved }: Props) {
+export default function CodexConfig({ config, onConfigSaved }: Props) {
   const [form, setForm] = useState<Record<string, any>>({})
   const [modelMapping, setModelMapping] = useState<Array<[string, string]>>([])
+  const lang = useContext(LangContext)
 
   useEffect(() => {
     setForm({ ...config })
@@ -15,11 +18,10 @@ export default function CodexConfig({ config, api, onConfigSaved }: Props) {
   }, [config])
 
   const handleSave = async () => {
-    if (!api) return
     const mapping: Record<string, string> = {}
     modelMapping.forEach(([k, v]) => { if (k.trim() && v.trim()) mapping[k.trim()] = v.trim() })
-    try { await api.SaveConfig({ ...form, model_mapping: mapping }); showToast('Codex é…ç½®å·²ä¿å­˜'); onConfigSaved() }
-    catch { showToast('ä¿å­˜å¤±è´¥', false) }
+    try { await AppBindings.SaveConfig({ ...form, model_mapping: mapping }); showToast(lang === 'zh' ? 'Codex ÅäÖÃÒÑ±£´æ' : 'Codex config saved'); onConfigSaved() }
+    catch { showToast(lang === 'zh' ? '±£´æÊ§°Ü' : 'Save failed', false) }
   }
 
   const addModelRow = () => setModelMapping([...modelMapping, ['', '']])
@@ -33,42 +35,42 @@ export default function CodexConfig({ config, api, onConfigSaved }: Props) {
   }
 
   return (<>
-    <Section title="ä¸Šæ¸¸è¿æ¥">
-      <div className="row"><label>API Key</label><input type="password" value={form.deepseek_key || ''} onChange={e => set('deepseek_key', e.target.value)} placeholder="sk-..." autoComplete="off" /><span className="hint">Codex ä¸ Claude å…±ç”¨</span></div>
+    <Section title={lang === 'zh' ? 'ÉÏÓÎÁ¬½Ó' : 'Upstream API'}>
+      <div className="row"><label>API Key</label><input type="password" value={form.deepseek_key || ''} onChange={e => set('deepseek_key', e.target.value)} placeholder="sk-..." autoComplete="off" /><span className="hint">{lang === 'zh' ? 'Codex Óë Claude ¹²ÓÃ´Ë Key' : 'Shared key for Codex & Claude'}</span></div>
       <div className="row"><label>Base URL</label><input type="text" value={form.deepseek_base || ''} onChange={e => set('deepseek_base', e.target.value)} placeholder="https://api.deepseek.com" /></div>
-      <div className="row"><label>é»˜è®¤æ¨¡å‹</label><input type="text" value={form.default_model || ''} onChange={e => set('default_model', e.target.value)} placeholder="deepseek-v4-pro" /></div>
+      <div className="row"><label>{lang === 'zh' ? 'Ä¬ÈÏÄ£ĞÍ' : 'Default Model'}</label><input type="text" value={form.default_model || ''} onChange={e => set('default_model', e.target.value)} placeholder="deepseek-v4-pro" /></div>
     </Section>
 
-    <Section title="æ¨¡å‹æ˜ å°„">
+    <Section title={lang === 'zh' ? 'Ä£ĞÍÓ³Éä' : 'Model Mapping'}>
       {modelMapping.map(([k, v], i) => (
         <div className="model-row" key={i}>
-          <input placeholder="OpenAI æ¨¡å‹ (å¦‚ gpt-5.5)" value={k} onChange={e => updateModelRow(i, 'k', e.target.value)} />
-          <input placeholder="DeepSeek æ¨¡å‹ (å¦‚ deepseek-v4-pro)" value={v} onChange={e => updateModelRow(i, 'v', e.target.value)} />
+          <input placeholder="OpenAI model (e.g. gpt-5.5)" value={k} onChange={e => updateModelRow(i, 'k', e.target.value)} />
+          <input placeholder="DeepSeek model (e.g. deepseek-v4-pro)" value={v} onChange={e => updateModelRow(i, 'v', e.target.value)} />
           <button onClick={() => removeModelRow(i)}>X</button>
         </div>
       ))}
-      <button className="row-btn" onClick={addModelRow}>+ æ·»åŠ æ˜ å°„</button>
+      <button className="row-btn" onClick={addModelRow}>+ {lang === 'zh' ? 'Ìí¼ÓÓ³Éä' : 'Add Mapping'}</button>
     </Section>
 
-    <Section title="ç”Ÿæˆå‚æ•°">
-      <div className="row"><label>æ¨ç†åŠ›åº¦</label><select value={form.reasoning_effort || ''} onChange={e => set('reasoning_effort', e.target.value || null)}><option value="">(ç”± DeepSeek å†³å®š)</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div>
-      <div className="row"><label>ä¸Šä¸‹æ–‡çª—å£</label><input type="number" min={1024} max={10000000} value={form.max_position_embeddings || 1000000} onChange={e => set('max_position_embeddings', parseInt(e.target.value))} /></div>
-      <div className="row"><label>æœ€å¤§è¾“å‡º Token</label><input type="number" min={1} max={131072} value={form.max_output_tokens || ''} onChange={e => set('max_output_tokens', parseInt(e.target.value) || null)} placeholder="16384" /></div>
-      <div className="row"><label>Temperature</label><input type="number" step={0.01} min={0} max={2} value={form.temperature ?? ''} onChange={e => set('temperature', e.target.value ? parseFloat(e.target.value) : null)} placeholder="(é»˜è®¤)" /></div>
-      <div className="row"><label>Top P</label><input type="number" step={0.01} min={0} max={1} value={form.top_p ?? ''} onChange={e => set('top_p', e.target.value ? parseFloat(e.target.value) : null)} placeholder="(é»˜è®¤)" /></div>
+    <Section title={lang === 'zh' ? 'Éú³É²ÎÊı' : 'Generation'}>
+      <div className="row"><label>{lang === 'zh' ? 'ÍÆÀíÇ¿¶È' : 'Reasoning'}</label><select value={form.reasoning_effort || ''} onChange={e => set('reasoning_effort', e.target.value || null)}><option value="">{lang === 'zh' ? '(ÓÉ DeepSeek ¾ö¶¨)' : '(let DeepSeek decide)'}</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></div>
+      <div className="row"><label>{lang === 'zh' ? 'ÉÏÏÂÎÄ´°¿Ú' : 'Context Window'}</label><input type="number" min={1024} max={10000000} value={form.max_position_embeddings || 1000000} onChange={e => set('max_position_embeddings', parseInt(e.target.value))} /></div>
+      <div className="row"><label>{lang === 'zh' ? '×î´óÊä³ö Token' : 'Max Output Tokens'}</label><input type="number" min={1} max={131072} value={form.max_output_tokens || ''} onChange={e => set('max_output_tokens', parseInt(e.target.value) || null)} placeholder="16384" /></div>
+      <div className="row"><label>Temperature</label><input type="number" step={0.01} min={0} max={2} value={form.temperature ?? ''} onChange={e => set('temperature', e.target.value ? parseFloat(e.target.value) : null)} placeholder={lang === 'zh' ? '(Ä¬ÈÏ)' : '(default)'} /></div>
+      <div className="row"><label>Top P</label><input type="number" step={0.01} min={0} max={1} value={form.top_p ?? ''} onChange={e => set('top_p', e.target.value ? parseFloat(e.target.value) : null)} placeholder={lang === 'zh' ? '(Ä¬ÈÏ)' : '(default)'} /></div>
     </Section>
 
-    <Section title="ç½‘é¡µæŠ“å–" defaultOpen={false}>
-      <div className="row"><label>æœ€å¤§ URL æ•°</label><input type="number" min={0} max={50} value={form.web_fetch_max_urls ?? 5} onChange={e => set('web_fetch_max_urls', parseInt(e.target.value))} /></div>
-      <div className="row"><label>è¶…æ—¶ (ç§’)</label><input type="number" min={1} max={120} value={form.web_fetch_timeout ?? 10} onChange={e => set('web_fetch_timeout', parseInt(e.target.value))} /></div>
-      <div className="row"><label>æœ€å¤§æ–‡æœ¬ (å­—èŠ‚)</label><input type="number" min={1000} max={1000000} value={form.web_fetch_max_body ?? 80000} onChange={e => set('web_fetch_max_body', parseInt(e.target.value))} /></div>
+    <Section title={lang === 'zh' ? 'ÍøÒ³×¥È¡' : 'Web Fetch'} defaultOpen={false}>
+      <div className="row"><label>{lang === 'zh' ? '×î´ó URL Êı' : 'Max URLs'}</label><input type="number" min={0} max={50} value={form.web_fetch_max_urls ?? 5} onChange={e => set('web_fetch_max_urls', parseInt(e.target.value))} /></div>
+      <div className="row"><label>{lang === 'zh' ? '³¬Ê± (Ãë)' : 'Timeout (s)'}</label><input type="number" min={1} max={120} value={form.web_fetch_timeout ?? 10} onChange={e => set('web_fetch_timeout', parseInt(e.target.value))} /></div>
+      <div className="row"><label>{lang === 'zh' ? '×î´óÏìÓ¦Ìå (×Ö½Ú)' : 'Max Body (bytes)'}</label><input type="number" min={1000} max={1000000} value={form.web_fetch_max_body ?? 80000} onChange={e => set('web_fetch_max_body', parseInt(e.target.value))} /></div>
     </Section>
 
-    <Section title="æ¨ç†ç¼“å­˜">
-      <div className="row"><label>å¯ç”¨ç¼“å­˜</label><label className="toggle"><input type="checkbox" checked={!!form.enable_reasoning_cache} onChange={e => set('enable_reasoning_cache', e.target.checked)} /><span className="slider" /></label></div>
-      <div className="row"><label>ç¼“å­˜æœ‰æ•ˆæœŸ (ç§’)</label><input type="number" min={30} max={86400} value={form.reasoning_cache_ttl ?? 600} onChange={e => set('reasoning_cache_ttl', parseInt(e.target.value))} /></div>
+    <Section title={lang === 'zh' ? 'ÍÆÀí»º´æ' : 'Reasoning Cache'}>
+      <div className="row"><label>{lang === 'zh' ? 'ÆôÓÃ»º´æ' : 'Enable Cache'}</label><label className="toggle"><input type="checkbox" checked={!!form.enable_reasoning_cache} onChange={e => set('enable_reasoning_cache', e.target.checked)} /></label></div>
+      <div className="row"><label>{lang === 'zh' ? '»º´æÓĞĞ§ÆÚ (Ãë)' : 'Cache TTL (s)'}</label><input type="number" min={30} max={86400} value={form.reasoning_cache_ttl ?? 600} onChange={e => set('reasoning_cache_ttl', parseInt(e.target.value))} /></div>
     </Section>
 
-    <div className="btn-row"><button className="btn primary" onClick={handleSave}>ä¿å­˜ Codex é…ç½®</button><button className="btn" onClick={onConfigSaved}>é‡æ–°åŠ è½½</button></div>
+    <div className="btn-row"><button className="btn primary" onClick={handleSave}>{lang === 'zh' ? '±£´æ Codex ÅäÖÃ' : 'Save Codex'}</button><button className="btn" onClick={onConfigSaved}>{lang === 'zh' ? 'ÖØĞÂ¼ÓÔØ' : 'Reload'}</button></div>
   </>)
 }

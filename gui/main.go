@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"embed"
@@ -13,7 +13,6 @@ import (
 //go:embed all:frontend/dist
 var frontendAssets embed.FS
 
-// releaseProxyExe extracts the embedded proxy-backend.exe to a temp location
 func releaseProxyExe() error {
 	if len(proxyExe) == 0 {
 		return nil
@@ -30,7 +29,6 @@ func releaseProxyExe() error {
 
 func main() {
 	app := NewApp()
-
 	if proxyExe != nil && len(proxyExe) > 0 {
 		if err := releaseProxyExe(); err != nil {
 			log.Printf("WARNING: cannot release proxy exe: %v", err)
@@ -52,28 +50,38 @@ func main() {
 
 	wailsApp.RegisterService(application.NewService(app))
 
-	// Create main window
 	window := wailsApp.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:     "main",
-		Title:    "JinDX Proxy Manager",
-		Width:    960,
-		Height:   720,
+		Name:      "main",
+		Title:     "JinDX Proxy Manager",
+		Width:     960,
+		Height:    720,
 		MinWidth:  800,
 		MinHeight: 600,
-		Windows: application.WindowsWindow{
-			HiddenOnTaskbar: false,
-		},
 	})
 
-	// Close to tray: hide instead of closing
 	window.OnWindowEvent(events.Common.WindowClosing, func(_ *application.WindowEvent) {
 		window.Hide()
 	})
 
-	// System tray
 	tray := wailsApp.SystemTray.New()
 	tray.SetTooltip("JinDX Proxy")
-	tray.SetMenu(createTrayMenu(app))
+	menu := wailsApp.NewMenu()
+	menu.Add("Show Window").OnClick(func(_ *application.Context) {
+		window.Show()
+		window.Focus()
+	})
+	menu.Add("Start Proxy").OnClick(func(_ *application.Context) {
+		app.StartProxy()
+	})
+	menu.Add("Stop Proxy").OnClick(func(_ *application.Context) {
+		app.StopProxy()
+	})
+	menu.AddSeparator()
+	menu.Add("Quit").OnClick(func(_ *application.Context) {
+		app.StopProxy()
+		wailsApp.Quit()
+	})
+	tray.SetMenu(menu)
 	tray.OnClick(func() {
 		if window.IsVisible() {
 			window.Hide()
@@ -84,13 +92,6 @@ func main() {
 	})
 	tray.Show()
 
-	// WebView 加载完成后聚焦到前台
-	window.OnWindowEvent(events.Windows.WebViewNavigationCompleted, func(_ *application.WindowEvent) {
-		window.Show()
-		window.Focus()
-	})
-
-	// 启动时显示窗口
 	window.Show()
 	window.Focus()
 
