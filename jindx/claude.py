@@ -139,8 +139,8 @@ def _claude_session_key(messages: list) -> str:
     if not short:
         return "claude_default"
     seed = json.dumps(short, ensure_ascii=False, sort_keys=True)[:200]
-    # ══ 加入随机因子避免不同 session 碰撞 ══
-    return f"claude_{hash(seed + uuid.uuid4().hex[:8]) & 0x7FFFFFFF:08x}"
+    # Deterministic session key: same conversation = same session_id for reasoning cache hits
+    return f"claude_{hash(seed) & 0x7FFFFFFF:08x}"
 
 
 def anthropic_to_chat(request_body: dict) -> dict:

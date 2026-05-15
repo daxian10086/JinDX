@@ -197,6 +197,8 @@ async def _stream_responses_sse(body: dict):
     try:
         async for event in _stream_responses_sse_inner(body):
             yield event
+    except GeneratorExit:
+        raise
     except Exception as e:
         logger.exception(f"SSE stream unhandled error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'error': {'message': str(e)}})}\n\n"
@@ -210,7 +212,6 @@ async def _stream_responses_sse_inner(body: dict):
     msg_id = _make_id("msg")
     output_index = 0
     content_index = 0
-    started = True
     sent_text_parts = False
     usage = {}
     tool_calls_by_index: dict[int, dict] = {}
@@ -447,7 +448,6 @@ async def _process_ws_request(ws: WebSocket, body: dict):
     chat_request = responses_to_chat(body)
     chat_request["stream"] = True
 
-    started = True
     sent_text_parts = False
     content_buf = ""
     reasoning_buf = ""
@@ -487,25 +487,6 @@ async def _process_ws_request(ws: WebSocket, body: dict):
                 if delta.get("usage"):
                     usage = delta["usage"]
 
-                if not started:
-                    started = True
-                    await ws.send_json({
-                        "type": "response.created",
-                        "response": {
-                            "id": resp_id, "object": "response",
-                            "created_at": delta.get("created", int(time.time())),
-                            "status": "in_progress", "model": model, "output": [],
-                        }
-                    })
-                    await ws.send_json({
-                        "type": "response.in_progress",
-                        "response": {"id": resp_id, "object": "response", "status": "in_progress", "model": model}
-                    })
-                    await ws.send_json({
-                        "type": "response.output_item.added",
-                        "output_index": output_index,
-                        "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "in_progress", "content": []}
-                    })
 
                 if reasoning_delta:
                     if not reasoning_buf and not content_buf:

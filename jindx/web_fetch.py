@@ -143,7 +143,18 @@ def _fetch_url_sync(url: str, fetch_timeout: int, max_body: int) -> tuple[str, s
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; ChatProxy/1.0)"})
         with urllib.request.urlopen(req, timeout=fetch_timeout) as resp:
-            text = resp.read().decode("utf-8", errors="replace")
+            # Read in chunks with a hard limit to prevent OOM on large responses
+            chunks = []
+            total = 0
+            chunk_size = 65536  # 64 KiB
+            hard_limit = max(max_body * 2, 10 * 1024 * 1024)  # at least 10 MiB
+            while total < hard_limit:
+                chunk = resp.read(min(chunk_size, hard_limit - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            text = b"".join(chunks).decode("utf-8", errors="replace")
             ct = resp.headers.get("Content-Type", "")
             if "html" in ct:
                 text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)

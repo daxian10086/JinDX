@@ -249,7 +249,7 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
   <h1><span class="dot" id="status-dot"></span><span data-i18n-zh="JinDX 代理管理" data-i18n-en="JinDX Proxy Manager">JinDX 代理管理</span></h1>
   <div class="topbar-right">
     <span style="font-size:12px;color:var(--muted);" data-i18n-zh="端口:" data-i18n-en="Port:">端口:</span>
-    <span style="font-size:12px;color:var(--accent);font-family:monospace;">:8090</span>
+    <span style="font-size:12px;color:var(--accent);font-family:monospace;" id="admin-port-display">:8090</span>
     <button id="lang-btn" onclick="toggleLang()" data-i18n-zh="English" data-i18n-en="中文">English</button>
   </div>
 </div>
@@ -364,6 +364,9 @@ body { font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, 
 var TOKEN_KEY='jindx_admin_token';
 var _adminToken = '';
 
+
+// Update port display dynamically
+(function(){ var el = document.getElementById("admin-port-display"); if (el) el.textContent = ":" + location.port; })();
 (function loadSavedToken(){
   // 1. URL ?token= 参数（最高优先级，手动指定）
   var p = new URLSearchParams(window.location.search);

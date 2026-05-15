@@ -157,7 +157,8 @@ def _generate_cert_cryptography():
         format=serialization.PrivateFormat.TraditionalOpenSSL,
         encryption_algorithm=serialization.NoEncryption(),
     ))
-    ca_key_file.chmod(0o600)
+    if os.name != "nt":
+        ca_key_file.chmod(0o600)
 
 
 def _generate_cert_openssl():
@@ -179,7 +180,8 @@ def _generate_cert_openssl():
         "-addext", "subjectKeyIdentifier=hash",
     ], check=True, capture_output=True)
 
-    ca_key_path.chmod(0o600)
+    if os.name != "nt":
+        ca_key_path.chmod(0o600)
 
     # 2. 生成 Server 私钥
     run([

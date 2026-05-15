@@ -123,10 +123,21 @@ class RuntimeConfig:
         self._config = cfg
 
     def _save(self) -> None:
-        """持久化当前配置到文件。"""
+        """持久化当前配置到文件（原子写入）。"""
+        import tempfile
         try:
             CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-            CONFIG_FILE.write_text(json.dumps(self._config, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", suffix=".json",
+                dir=str(CONFIG_FILE.parent), delete=False
+            )
+            try:
+                json.dump(self._config, tmp, indent=2, ensure_ascii=False)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            finally:
+                tmp.close()
+            os.replace(tmp.name, str(CONFIG_FILE))
         except OSError as e:
             logger.error(f"Failed to save config: {e}")
 
@@ -263,22 +274,20 @@ def _ensure_claude_hosts_hijack() -> None:
     try:
         with open(hosts_path, "r", encoding="utf-8") as f:
             existing = f.read()
-    except Exception:
+    except OSError:
         existing = ""
-    changed = False
-    entries_to_add = []
-    for ip, domain in _CLAUDE_HOSTS:
-        line = f"{ip} {domain}"
-        if line not in existing:
-            entries_to_add.append(line)
-            changed = True
-    if not changed:
-        logger.debug("Claude hosts hijack already in place")
-        return
+    # Remove any duplicate entries from previous runs, then add fresh ones
+    ex_lines = existing.splitlines(keepends=True)
+    cleaned = [l for l in ex_lines if not any(
+        l.strip() == f"{ip} {domain}" for ip, domain in _CLAUDE_HOSTS
+    )]
+    entries_to_add = [f"{ip} {domain}" for ip, domain in _CLAUDE_HOSTS]
     try:
-        with open(hosts_path, "a", encoding="utf-8") as f:
-            for entry in entries_to_add:
-                f.write(f"\n{entry}")
+        with open(hosts_path, "w", encoding="utf-8") as f:
+            f.writelines(cleaned)
+            f.write("\n")
+            f.write("\n".join(entries_to_add))
+            f.write("\n")
         logger.info(
             "Claude hosts hijack written: "
             + ", ".join(entries_to_add)
@@ -286,7 +295,7 @@ def _ensure_claude_hosts_hijack() -> None:
     except PermissionError:
         logger.warning(
             "Cannot write hosts file (need admin). "
-            "Run start.ps1 as admin or add manually: "
+            "Run as admin or add manually: "
             + ", ".join(entries_to_add)
         )
 
