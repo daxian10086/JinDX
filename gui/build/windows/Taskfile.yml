@@ -1,7 +1,0 @@
-version: '3'
-
-tasks:
-  default:
-    desc: Build Wails application for Windows
-    cmds:
-      - go build -ldflags="-s -w -H windowsgui" -o ../../dist/jindx-gui.exe -tags="prod" .
