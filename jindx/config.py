@@ -55,11 +55,9 @@ CONFIG_FILE = Path(_default_config_path())
 
 # ── TLS 证书路径 ───────────────────────────────────────────────────────
 
-# 打包为 exe (PyInstaller) 时，证书目录放在 exe 同目录下以保证可写
-if getattr(sys, 'frozen', False):
-    CERT_DIR = Path("C:/") / "JinDX-Certs"
-else:
-    CERT_DIR = Path(__file__).parent.parent / "certs"
+# Certs always generated to C:\\JinDX-Certs for portability
+CERT_DIR = Path("C:/") / "JinDX-Certs"
+
 CERT_FILE = CERT_DIR / "tls.crt"
 KEY_FILE = CERT_DIR / "tls.key"
 
