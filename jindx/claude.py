@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from .config import config
 from .cache import get_cached_reasoning, cache_reasoning, get_session_id
 from .routes import get_http_client
-from .stats import record_request, record_error, record_upstream_error, log_error
+from .stats import record_claude_request, record_error, record_upstream_error, log_error
 
 logger = logging.getLogger(__name__)
 
@@ -454,7 +454,7 @@ def _get_auth_headers() -> dict:
 # ═══════════════════════════════════════════════════════════
 
 async def claude_messages(request: Request):
-    record_request()
+    record_claude_request()
     try: body = await request.json()
     except json.JSONDecodeError: raise HTTPException(status_code=400, detail="Invalid JSON body")
 

@@ -622,7 +622,7 @@ async def _process_ws_request(ws: WebSocket, body: dict):
             if reasoning_buf:
                 cache_reasoning("codex", get_session_id(body), reasoning_buf)
             logger.info(f"WS done: reasoning={len(reasoning_buf)}B, content={len(content_buf)}B, "
-                        f"tool_calls={len(tool_calls_by_index)}, started={started}, sent_parts={sent_text_parts}")
+                        f"tool_calls={len(tool_calls_by_index)}, sent_parts={sent_text_parts}")
 
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         logger.error(f"WS stream error: {e}")
@@ -662,6 +662,67 @@ async def health():
     }
 
 # ── Compact（对话压缩）端点 ─────────────────────────────────────────
+
+
+def _to_content_parts(text):
+    return [{"type": "input_text", "text": text}]
+
+def _normalize_items(items):
+    """Convert items with plain-string content to content-part arrays."""
+    result = []
+    for item in items:
+        if not isinstance(item, dict):
+            result.append(item)
+            continue
+        item = dict(item)
+        cnt = item.get("content")
+        if isinstance(cnt, str):
+            item["content"] = _to_content_parts(cnt)
+        result.append(item)
+    return result
+
+def _format_conversation_for_compact(inp: list) -> str:
+    """将 input 列表格式化为可读对话文本用于摘要。"""
+    lines = []
+    for item in inp:
+        if isinstance(item, dict):
+            role = item.get("role", "")
+            itype = item.get("type", "")
+            content = item.get("content", "")
+
+            if itype == "function_call":
+                name = item.get("name", "")
+                args = item.get("arguments", "")
+                args_short = args[:200] + "..." if len(args) > 200 else args
+                lines.append(f"[工具调用] {name}({args_short})")
+            elif itype == "function_call_output":
+                call_id = item.get("call_id", "")
+                output = item.get("output", "")
+                output_short = str(output)[:300] + "..." if len(str(output)) > 300 else str(output)
+                lines.append(f"[工具结果 {call_id}] {output_short}")
+            elif role or itype == "message":
+                role_label = {"user": "用户", "assistant": "助手", "developer": "系统", "system": "系统", "tool": "工具"}.get(role, role)
+                if isinstance(content, list):
+                    text_parts = []
+                    for part in content:
+                        if isinstance(part, dict):
+                            pt = part.get("type", "")
+                            if pt in ("output_text", "input_text", "text"):
+                                t = part.get("text", "")
+                                if len(t) > 500:
+                                    t = t[:500] + "..."
+                                text_parts.append(t)
+                            elif pt == "reasoning_text":
+                                t = part.get("text", "")
+                                if len(t) > 200:
+                                    t = t[:200] + "..."
+                                text_parts.append(f"[思考: {t}]")
+                    content = "\n".join(text_parts)
+                elif isinstance(content, str) and len(content) > 800:
+                    content = content[:800] + "..."
+                lines.append(f"[{role_label}] {content}")
+            # 跳过其他类型
+    return "\n\n".join(lines)
 
 async def responses_compact(request: Request):
     """处理 OpenAI /v1/responses/compact 请求。
@@ -718,20 +779,6 @@ async def responses_compact(request: Request):
         summary_text = chat_data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
         # 帮助函数：将 content 转为 input_text 数组格式（OpenAI Responses API 要求）
-        def _to_content_parts(text):
-            return [{"type": "input_text", "text": text}]
-
-        def _normalize_items(items):
-            """将 content 为纯字符串的 item 转为数组格式。"""
-            result = []
-            for item in items:
-                item = dict(item)
-                cnt = item.get("content")
-                if isinstance(cnt, str):
-                    item["content"] = _to_content_parts(cnt)
-                result.append(item)
-            return result
-
         # 构造压缩后的 input：instructions + 摘要 + 最近几轮原始消息保持上下文
         compacted = []
         # 保留 instructions
@@ -765,45 +812,3 @@ async def responses_compact(request: Request):
         })
 
 
-def _format_conversation_for_compact(inp: list) -> str:
-    """将 input 列表格式化为可读对话文本用于摘要。"""
-    lines = []
-    for item in inp:
-        if isinstance(item, dict):
-            role = item.get("role", "")
-            itype = item.get("type", "")
-            content = item.get("content", "")
-
-            if itype == "function_call":
-                name = item.get("name", "")
-                args = item.get("arguments", "")
-                args_short = args[:200] + "..." if len(args) > 200 else args
-                lines.append(f"[工具调用] {name}({args_short})")
-            elif itype == "function_call_output":
-                call_id = item.get("call_id", "")
-                output = item.get("output", "")
-                output_short = str(output)[:300] + "..." if len(str(output)) > 300 else str(output)
-                lines.append(f"[工具结果 {call_id}] {output_short}")
-            elif role or itype == "message":
-                role_label = {"user": "用户", "assistant": "助手", "developer": "系统", "system": "系统", "tool": "工具"}.get(role, role)
-                if isinstance(content, list):
-                    text_parts = []
-                    for part in content:
-                        if isinstance(part, dict):
-                            pt = part.get("type", "")
-                            if pt in ("output_text", "input_text", "text"):
-                                t = part.get("text", "")
-                                if len(t) > 500:
-                                    t = t[:500] + "..."
-                                text_parts.append(t)
-                            elif pt == "reasoning_text":
-                                t = part.get("text", "")
-                                if len(t) > 200:
-                                    t = t[:200] + "..."
-                                text_parts.append(f"[思考: {t}]")
-                    content = "\n".join(text_parts)
-                elif isinstance(content, str) and len(content) > 800:
-                    content = content[:800] + "..."
-                lines.append(f"[{role_label}] {content}")
-            # 跳过其他类型
-    return "\n\n".join(lines)

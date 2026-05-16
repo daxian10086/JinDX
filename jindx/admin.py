@@ -1,4 +1,4 @@
-﻿"""管理 API 和 Web 管理面板。"""
+"""管理 API 和 Web 管理面板。"""
 
 import json
 import logging
