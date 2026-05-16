@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import WebSocketDisconnect
 
-from .config import config, CERT_DIR, CERT_FILE, KEY_FILE, PROXY_PORT, CONNECT_PORT, TLS_PORT
+from .config import config, CERT_DIR, CERT_FILE, KEY_FILE, PROXY_PORT, CONNECT_PORT, TLS_PORT, INTERNAL_HTTP_PORT
 
 logger = logging.getLogger(__name__)
 
@@ -415,10 +415,14 @@ class TunnelWsAdapter:
 
 
 # ── CONNECT 隧道服务器 ───────────────────────────────────────────
+# 监听 PROXY_PORT (8080) 做协议检测：
+#   - CONNECT → TLS 终止 → pipe 到 INTERNAL_HTTP_PORT
+#   - 非 CONNECT (HTTP 代理) → 直接 pipe 到 INTERNAL_HTTP_PORT
+# 同时保留 CONNECT_PORT (8443) 向后兼容。
 
 async def _run_connect_server():
-    """启动原始 TCP 服务器，处理 HTTP CONNECT + TLS 终止，
-    然后透明代理到本地 HTTP/WS 服务器。"""
+    """启动原始 TCP 服务器，处理 HTTP CONNECT + TLS 终止 / HTTP 代理转发，
+    将流量转发到内部 FastAPI 实例 (INTERNAL_HTTP_PORT)。"""
     if CONNECT_PORT == 0:
         logger.info("CONNECT tunnel DISABLED (CONNECT_PORT=0)")
         return
@@ -443,7 +447,71 @@ async def _run_connect_server():
             except (ConnectionError, OSError):
                 pass
 
-    async def handle_connect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    async def handle_proxy_port(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        """PROXY_PORT 协议检测入口：CONNECT → TLS 隧道，否则 → HTTP 代理转发"""
+        peer = writer.get_extra_info('peername')
+        try:
+            data = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=10)
+            header_bytes = data
+            first_line = data.split(b'\r\n')[0].decode(errors='replace')
+
+            if first_line.startswith('CONNECT '):
+                # ── HTTPS CONNECT 隧道 ──
+                writer.write(b'HTTP/1.1 200 Connection Established\r\n\r\n')
+                await writer.drain()
+
+                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+                ctx.load_cert_chain(str(CERT_FILE), str(KEY_FILE))
+
+                loop = asyncio.get_event_loop()
+                transport = writer.transport
+
+                tls_reader = asyncio.StreamReader()
+                protocol = asyncio.StreamReaderProtocol(tls_reader)
+
+                tls_transport = await loop.start_tls(
+                    transport=transport,
+                    protocol=protocol,
+                    sslcontext=ctx,
+                    server_side=True,
+                    ssl_handshake_timeout=10,
+                )
+                tls_writer = asyncio.StreamWriter(tls_transport, protocol, tls_reader, loop)
+
+                backend_reader, backend_writer = await asyncio.open_connection('127.0.0.1', INTERNAL_HTTP_PORT)
+
+                await asyncio.gather(
+                    pipe(tls_reader, backend_writer, "tls->internal"),
+                    pipe(backend_reader, tls_writer, "internal->tls"),
+                )
+            else:
+                # ── HTTP 代理请求 (非 CONNECT) → 直接转发到内部 FastAPI ──
+                backend_reader, backend_writer = await asyncio.open_connection('127.0.0.1', INTERNAL_HTTP_PORT)
+
+                # 先把已读取的 headers 写入后端
+                backend_writer.write(header_bytes)
+                await backend_writer.drain()
+
+                await asyncio.gather(
+                    pipe(reader, backend_writer, "client->internal"),
+                    pipe(backend_reader, writer, "internal->client"),
+                )
+
+        except (ConnectionError, asyncio.TimeoutError):
+            pass
+        except ssl.SSLError as e:
+            logger.warning(f"TLS handshake failed from {peer}: {e}")
+        except Exception as e:
+            logger.error(f"Proxy port error from {peer}: {e}")
+        finally:
+            try:
+                writer.close()
+            except (ConnectionError, OSError):
+                pass
+
+    # 原有的 handle_connect (CONNECT_PORT，向后兼容)
+    async def handle_connect_port(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        """CONNECT_PORT 入口：仅处理 CONNECT → TLS 隧道 (向后兼容)"""
         peer = writer.get_extra_info('peername')
         try:
             data = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout=10)
@@ -476,11 +544,11 @@ async def _run_connect_server():
             )
             tls_writer = asyncio.StreamWriter(tls_transport, protocol, tls_reader, loop)
 
-            backend_reader, backend_writer = await asyncio.open_connection('127.0.0.1', PROXY_PORT)
+            backend_reader, backend_writer = await asyncio.open_connection('127.0.0.1', INTERNAL_HTTP_PORT)
 
             await asyncio.gather(
-                pipe(tls_reader, backend_writer, "client->backend"),
-                pipe(backend_reader, tls_writer, "backend->client"),
+                pipe(tls_reader, backend_writer, "tls->internal"),
+                pipe(backend_reader, tls_writer, "internal->tls"),
             )
 
         except (ConnectionError, asyncio.TimeoutError):
@@ -495,8 +563,18 @@ async def _run_connect_server():
             except (ConnectionError, OSError):
                 pass
 
-    server = await asyncio.start_server(handle_connect, '127.0.0.1', CONNECT_PORT)
+    # 启动两个监听：PROXY_PORT (协议检测) + CONNECT_PORT (向后兼容)
+    # PROXY_PORT listens on all interfaces for convenience (LAN proxy).
+    # For public deployments, set PROXY_HOST env var or use firewall rules.
+    proxy_server = await asyncio.start_server(handle_proxy_port, '0.0.0.0', PROXY_PORT)
+    connect_server = await asyncio.start_server(handle_connect_port, '127.0.0.1', CONNECT_PORT)
+
+    logger.info(f"Proxy port (HTTP+CONNECT) listening on 0.0.0.0:{PROXY_PORT}")
     logger.info(f"CONNECT+TLS tunnel server listening on 127.0.0.1:{CONNECT_PORT}")
 
-    async with server:
-        await server.serve_forever()
+    async with proxy_server, connect_server:
+        # 并行运行两个服务器
+        await asyncio.gather(
+            proxy_server.serve_forever(),
+            connect_server.serve_forever(),
+        )

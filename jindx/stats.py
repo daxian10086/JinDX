@@ -24,6 +24,8 @@ _stats_lock = Lock()
 
 _log_buffer: list[dict] = []  # each entry: {"ts": float, "msg": str}
 _MAX_LOG_BUFFER = 200
+# Note: using list+slice for simplicity; for high-throughput scenarios
+# consider collections.deque(maxlen=_MAX_LOG_BUFFER)
 
 
 def record_request():
@@ -80,6 +82,7 @@ def log_error(msg: str):
     """追加到内存环形缓冲区，供仪表盘日志查看器使用。"""
     entry = {"ts": time.time(), "msg": sanitize_log(msg[:500])}
     _log_buffer.append(entry)
+    # Trim old entries (keeps last _MAX_LOG_BUFFER)
     if len(_log_buffer) > _MAX_LOG_BUFFER:
         del _log_buffer[:len(_log_buffer) - _MAX_LOG_BUFFER]
 

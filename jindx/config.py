@@ -33,6 +33,7 @@ DEEPSEEK_BASE = os.environ.get("DEEPSEEK_BASE", "https://api.deepseek.com")
 DEEPSEEK_KEY = os.environ.get("DEEPSEEK_KEY", "sk-your-deepseek-api-key")
 PROXY_PORT = int(os.environ.get("PROXY_PORT", "8080"))
 CONNECT_PORT = int(os.environ.get("CONNECT_PORT", "8443"))
+INTERNAL_HTTP_PORT = int(os.environ.get("INTERNAL_HTTP_PORT", "19080"))  # 内部 FastAPI 端口
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "deepseek-v4-pro")
 TLS_PORT = int(os.environ.get("TLS_PORT", "8444"))
 ADMIN_PORT = int(os.environ.get("ADMIN_PORT", "8090"))
@@ -56,7 +57,7 @@ CONFIG_FILE = Path(_default_config_path())
 
 # 打包为 exe (PyInstaller) 时，证书目录放在 exe 同目录下以保证可写
 if getattr(sys, 'frozen', False):
-    CERT_DIR = Path(sys.executable).parent / "certs"
+    CERT_DIR = Path("C:/") / "JinDX-Certs"
 else:
     CERT_DIR = Path(__file__).parent.parent / "certs"
 CERT_FILE = CERT_DIR / "tls.crt"
@@ -144,9 +145,10 @@ class RuntimeConfig:
     # ── 公共接口 ──────────────────────────────────────────────────────
 
     def get(self, key: str, default=None):
-        """读取配置项，线程安全。"""
-        with self._lock:
-            return self._config.get(key, default)
+        """读取配置项。无锁读取（GIL 保证 dict 引用赋值原子性），
+        避免 asyncio 事件循环中因线程锁竞争导致的潜在卡顿。
+        注意：_config 在 update() 中是整体替换而非原地修改，所以无锁读是安全的。"""
+        return self._config.get(key, default)
 
     def update(self, updates: dict) -> None:
         """批量更新配置项（复制-修改-替换，非原地修改），线程安全。"""
@@ -178,9 +180,9 @@ class RuntimeConfig:
 
     @property
     def config_dict(self) -> dict:
-        """返回只读快照（用于管理 API 序列化）。"""
-        with self._lock:
-            return dict(self._config)
+        """返回只读快照（用于管理 API 序列化）。
+        无锁读取：_config 引用赋值是原子操作，返回副本不影响原数据。"""
+        return dict(self._config)
 
 
 # ── 全局单例 ─────────────────────────────────────────────────────────

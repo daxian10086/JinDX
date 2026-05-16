@@ -15,12 +15,14 @@ from urllib.parse import urlparse
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 
-from jindx.config import config, PROXY_PORT, CONNECT_PORT, TLS_PORT, ADMIN_PORT, write_codex_config_toml, write_claude_settings_json
+from jindx.config import config, PROXY_PORT, CONNECT_PORT, TLS_PORT, ADMIN_PORT, INTERNAL_HTTP_PORT, write_codex_config_toml, write_claude_settings_json
 from jindx.tunnel import ensure_certs, _run_connect_server, CERT_FILE, KEY_FILE
 from jindx.admin import admin_app
 from jindx.stats import SensitiveDataFilter
 
-logging.basicConfig(level=logging.INFO)
+import sys as _sys
+if "__main__" in _sys.argv[0] or "proxy.py" in _sys.argv[0]:
+    logging.basicConfig(level=logging.INFO)
 logging.getLogger().addFilter(SensitiveDataFilter())
 logger = logging.getLogger(__name__)
 
@@ -153,7 +155,7 @@ if __name__ == "__main__":
             "=" * 56,
             "  JinDX Proxy | 启动完成",
             f"    http://127.0.0.1:{ADMIN_PORT}        管理面板",
-            f"    http://127.0.0.1:{PROXY_PORT}        API 代理",
+            f"    http://127.0.0.1:{PROXY_PORT}        API 代理 (HTTP + CONNECT)",
             f"    https://127.0.0.1:{TLS_PORT}        TLS 代理",
             "=" * 56,
             "",
@@ -168,10 +170,11 @@ if __name__ == "__main__":
         # 提前绑定 socket，避免 uvicorn 0.46.0 在 asyncio.gather 并发时的自冲突
         import socket as _socket
 
-        http_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-        http_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
-        http_sock.bind(("0.0.0.0", PROXY_PORT))
-        http_sock.listen()
+        # 内部 HTTP 端口 (仅 localhost) — tunnel 转发目标
+        internal_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        internal_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        internal_sock.bind(("127.0.0.1", INTERNAL_HTTP_PORT))
+        internal_sock.listen()
 
         tls_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
         tls_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
@@ -183,20 +186,20 @@ if __name__ == "__main__":
         admin_sock.bind(("0.0.0.0", ADMIN_PORT))
         admin_sock.listen()
 
-        http_config = uvicorn.Config(app, host="0.0.0.0", port=PROXY_PORT, loop="asyncio")
+        internal_config = uvicorn.Config(app, host="127.0.0.1", port=INTERNAL_HTTP_PORT, loop="asyncio")
         tls_config = uvicorn.Config(
             app, host="0.0.0.0", port=TLS_PORT, loop="asyncio",
             ssl_certfile=str(CERT_FILE), ssl_keyfile=str(KEY_FILE),
         )
         admin_config = uvicorn.Config(admin_app, host="0.0.0.0", port=ADMIN_PORT, loop="asyncio")
 
-        http_server = uvicorn.Server(http_config)
+        internal_server = uvicorn.Server(internal_config)
         tls_server = uvicorn.Server(tls_config)
         admin_server = uvicorn.Server(admin_config)
 
         await asyncio.gather(
             connect_task,
-            http_server.serve(sockets=[http_sock]),
+            internal_server.serve(sockets=[internal_sock]),
             tls_server.serve(sockets=[tls_sock]),
             admin_server.serve(sockets=[admin_sock]),
         )
