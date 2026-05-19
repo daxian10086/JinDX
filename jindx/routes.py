@@ -1,4 +1,4 @@
-"""HTTP、SSE 和 WebSocket API 路由。"""
+﻿"""HTTP、SSE 和 WebSocket API 路由。"""
 
 import asyncio
 import json
@@ -367,7 +367,9 @@ async def _stream_responses_sse_inner(body: dict):
 # ── WebSocket 处理 ─────────────────────────────────────────────────
 
 async def handle_ws_session(ws: WebSocket):
-    """WebSocket 会话逻辑 — 处理第一个非空请求后关闭。"""
+    """WebSocket
+    """
+    record_codex_request()
     while True:
         try:
             raw = await ws.receive_text()
