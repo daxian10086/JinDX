@@ -419,6 +419,7 @@ async def handle_ws_session(ws: WebSocket):
 
 async def _process_ws_request(ws: WebSocket, body: dict):
     """处理单个 Responses API 请求的 WebSocket 流式响应。"""
+    increment_active_streams()
     model = map_model(body.get("model", DEFAULT_MODEL))
     msg_id = _make_id("msg")
     resp_id = _make_id("resp")
@@ -623,10 +624,12 @@ async def _process_ws_request(ws: WebSocket, body: dict):
 
             if reasoning_buf:
                 cache_reasoning("codex", get_session_id(body), reasoning_buf)
+            decrement_active_streams()
             logger.info(f"WS done: reasoning={len(reasoning_buf)}B, content={len(content_buf)}B, "
                         f"tool_calls={len(tool_calls_by_index)}, sent_parts={sent_text_parts}")
 
     except (httpx.TimeoutException, httpx.ConnectError) as e:
+        decrement_active_streams()
         logger.error(f"WS stream error: {e}")
         await ws.send_json({"type": "error", "error": {"message": str(e)}})
 
